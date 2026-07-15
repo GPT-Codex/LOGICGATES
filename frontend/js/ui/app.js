@@ -8,8 +8,9 @@ import { SimulationEngine } from "../simulation/simulation_engine.js";
 import { ModuleRegistry, ModuleDefinition, UserModule } from "../simulation/modules.js";
 import { serializeCircuit, deserializeCircuit } from "../simulation/serialization.js";
 import { Workspace } from "../canvas/workspace.js";
-import { isPointNearWire, drawWire, computeManhattanRoute } from "../canvas/wires.js";
+import { isPointNearWire, drawWire, computeManhattanRoute, isPointNearSegment } from "../canvas/wires.js";
 import { SelectionManager, ClipboardManager, HistoryManager } from "../canvas/interactions.js";
+import { openModal, closeModal } from "./modals.js";
 
 // Global instances
 const circuit = new Circuit();
@@ -17,6 +18,16 @@ const engine = new SimulationEngine(circuit);
 const registry = new ModuleRegistry();
 
 let canvas, workspace, selectionManager, clipboardManager, historyManager;
+window._debug_vars = {
+    get canvas() { return canvas; },
+    get workspace() { return workspace; },
+    get selectionManager() { return selectionManager; },
+    get clipboardManager() { return clipboardManager; },
+    get historyManager() { return historyManager; },
+    get circuit() { return circuit; },
+    get engine() { return engine; },
+    get registry() { return registry; }
+};
 
 // Interaction states
 let placingComponentType = null; // Type of gate we are currently placing
@@ -26,6 +37,15 @@ let isDrawingWire = false;
 let isPanning = false;
 let panLastX = 0;
 let panLastY = 0;
+
+let isDraggingBendPoint = false;
+let activeDragWire = null;
+let activeDragPointIndex = -1;
+
+let isResizingCableLeft = false;
+let isResizingCableRight = false;
+let activeResizeCable = null;
+let fixedEdgeX = 0;
 
 // Marquee (rectangle selection) selection states
 let isSelectingMarquee = false;
@@ -57,21 +77,47 @@ window.addEventListener("DOMContentLoaded", () => {
     // Rebuild initial state
     engine.evaluateAll();
 
-    // Set up periodic clock trigger (e.g. 500ms toggle for ClockGate types)
+    // Master Timer for Clocks and high-resolution visual simulation logic
+    let lastTickTime = performance.now();
     setInterval(() => {
+        const now = performance.now();
+        const elapsedMs = now - lastTickTime;
+        lastTickTime = now;
+
         let changed = false;
         for (const comp of circuit.components.values()) {
             if (comp.type === "Clock") {
-                comp.stateValue = comp.stateValue === 1 ? 0 : 1;
-                comp.evaluate();
-                engine.propagatePin(comp.outputs[0]);
-                changed = true;
+                if (!comp.elapsedAccumulator) comp.elapsedAccumulator = 0;
+                comp.elapsedAccumulator += elapsedMs;
+
+                if (comp.frequency <= 0) continue;
+
+                // T = 1 / f seconds. Half period = 500 / f ms.
+                const halfPeriodMs = 500 / comp.frequency;
+
+                const toggles = Math.floor(comp.elapsedAccumulator / halfPeriodMs);
+                if (toggles > 0) {
+                    comp.elapsedAccumulator -= toggles * halfPeriodMs;
+
+                    // Cap real-time evaluation toggles to prevent browser freezing.
+                    // For frequencies > 1 kHz, cap toggles to a safe number per tick.
+                    const cap = comp.frequency > 1000 ? Math.min(toggles, 10) : toggles;
+                    for (let i = 0; i < cap; i++) {
+                        comp.stateValue = comp.stateValue === 1 ? 0 : 1;
+                        comp.evaluate();
+                        engine.propagatePin(comp.outputs[0]);
+                    }
+                    changed = true;
+                }
             }
         }
         if (changed) {
             engine.propagate();
         }
-    }, 500);
+
+        // Always update visual values (which runs 1 kHz logic matching visual throttling rules)
+        updateVisualValues(elapsedMs);
+    }, 10); // Master timer ticks every 10ms
 
     // Initial state push
     saveHistoryState();
@@ -120,6 +166,23 @@ function setupCanvasEvents() {
         }
 
         if (e.button === 0) {
+            // Check if clicked near a bend point handle of the selected wire(s)
+            for (const wire of selectionManager.selectedWires) {
+                if (wire.points && wire.points.length > 2) {
+                    for (let i = 1; i < wire.points.length - 1; i++) {
+                        const pt = wire.points[i];
+                        const dist = Math.hypot(world.x - pt.x, world.y - pt.y);
+                        if (dist <= 6) {
+                            isDraggingBendPoint = true;
+                            activeDragWire = wire;
+                            activeDragPointIndex = i;
+                            e.preventDefault();
+                            return;
+                        }
+                    }
+                }
+            }
+
             // Check if we are in placing gate mode
             if (placingComponentType) {
                 const id = `${placingComponentType.toLowerCase().replace(/\s+/g, "_")}_${Math.random().toString(36).substring(2, 9)}`;
@@ -164,6 +227,41 @@ function setupCanvasEvents() {
             // 2. Check if clicked on an actual Component
             const clickedComp = findComponentAt(world.x, world.y);
             if (clickedComp) {
+                // If it is a Button, handle click
+                if (clickedComp.type === "Button") {
+                    clickedComp.isPressed = true;
+                    clickedComp.triggerClick(engine);
+                    if (e.shiftKey) {
+                        selectionManager.toggleComponent(clickedComp);
+                    } else {
+                        selectionManager.selectSingleComponent(clickedComp);
+                    }
+                    saveHistoryState();
+                    updatePropertiesPanel();
+                    return;
+                }
+
+                // If it is a Cable, check if clicked near its left or right resizing edges
+                if (clickedComp.type === "UserModule" && clickedComp.definition && clickedComp.definition.moduleType === "Cable") {
+                    const rightX = clickedComp.x + clickedComp.width / 2;
+                    const leftX = clickedComp.x - clickedComp.width / 2;
+
+                    if (Math.abs(world.x - rightX) <= 12) {
+                        isResizingCableRight = true;
+                        activeResizeCable = clickedComp;
+                        fixedEdgeX = leftX; // left edge stays fixed
+                        e.preventDefault();
+                        return;
+                    }
+                    if (Math.abs(world.x - leftX) <= 12) {
+                        isResizingCableLeft = true;
+                        activeResizeCable = clickedComp;
+                        fixedEdgeX = rightX; // right edge stays fixed
+                        e.preventDefault();
+                        return;
+                    }
+                }
+
                 // Manage multi-select and toggle
                 if (e.shiftKey) {
                     selectionManager.toggleComponent(clickedComp);
@@ -204,6 +302,36 @@ function setupCanvasEvents() {
         const world = workspace.screenToWorld(e.clientX, e.clientY);
         activeMouseWorld = world;
 
+        if (isDraggingBendPoint && activeDragWire) {
+            const pt = activeDragWire.points[activeDragPointIndex];
+            if (pt) {
+                pt.x = workspace.snap(world.x);
+                pt.y = workspace.snap(world.y);
+                activeDragWire.isManuallyRouted = true;
+            }
+            return;
+        }
+
+        if (isResizingCableRight && activeResizeCable) {
+            const newWidth = world.x - fixedEdgeX;
+            if (newWidth >= 40) {
+                activeResizeCable.width = workspace.snap(newWidth);
+                activeResizeCable.x = fixedEdgeX + activeResizeCable.width / 2;
+                activeResizeCable.pins().forEach(p => activeResizeCable.applyPinSideMath(p));
+            }
+            return;
+        }
+
+        if (isResizingCableLeft && activeResizeCable) {
+            const newWidth = fixedEdgeX - world.x;
+            if (newWidth >= 40) {
+                activeResizeCable.width = workspace.snap(newWidth);
+                activeResizeCable.x = fixedEdgeX - activeResizeCable.width / 2;
+                activeResizeCable.pins().forEach(p => activeResizeCable.applyPinSideMath(p));
+            }
+            return;
+        }
+
         if (isPanning) {
             const dx = e.clientX - panLastX;
             const dy = e.clientY - panLastY;
@@ -232,6 +360,29 @@ function setupCanvasEvents() {
     });
 
     canvas.addEventListener("mouseup", (e) => {
+        // Reset Toggle button pressed states on mouseup
+        for (const comp of circuit.components.values()) {
+            if (comp.type === "Button" && comp.buttonMode === "press") {
+                comp.isPressed = false;
+            }
+        }
+
+        if (isResizingCableLeft || isResizingCableRight) {
+            isResizingCableLeft = false;
+            isResizingCableRight = false;
+            activeResizeCable = null;
+            saveHistoryState();
+            return;
+        }
+
+        if (isDraggingBendPoint) {
+            isDraggingBendPoint = false;
+            activeDragWire = null;
+            activeDragPointIndex = -1;
+            saveHistoryState();
+            return;
+        }
+
         if (isPanning) {
             isPanning = false;
             return;
@@ -248,6 +399,44 @@ function setupCanvasEvents() {
 
                 // Wires must only connect OUTPUT -> INPUT and separate components
                 if (activePinSource.type === "output" && targetPin.type === "input" && activePinSource.component !== targetPin.component) {
+
+                    const compA = activePinSource.component;
+                    const compB = targetPin.component;
+
+                    const isCompACable = compA.type === "UserModule" && compA.definition && compA.definition.moduleType === "Cable";
+                    const isCompBConnector = compB.type === "UserModule" && compB.definition && compB.definition.moduleType === "Connector";
+
+                    const isCompBCable = compB.type === "UserModule" && compB.definition && compB.definition.moduleType === "Cable";
+                    const isCompAConnector = compA.type === "UserModule" && compA.definition && compA.definition.moduleType === "Connector";
+
+                    if ((isCompACable && isCompBConnector) || (isCompBCable && isCompAConnector)) {
+                        const cable = isCompACable ? compA : compB;
+                        const connector = isCompACable ? compB : compA;
+
+                        const cablePins = cable.pins();
+                        const connectorPins = connector.pins();
+
+                        // 1. Check number of pins
+                        if (cablePins.length !== connectorPins.length) {
+                            alert(`Connection Rejected: Pin count mismatch.\nCable has ${cablePins.length} pins, but Connector has ${connectorPins.length} pins.`);
+                            activePinSource = null;
+                            updateStatusBar();
+                            return;
+                        }
+
+                        // 2. Check Pin names (case-sensitive) must match exactly
+                        const cableNames = cablePins.map(p => p.name).sort();
+                        const connectorNames = connectorPins.map(p => p.name).sort();
+
+                        for (let i = 0; i < cableNames.length; i++) {
+                            if (cableNames[i] !== connectorNames[i]) {
+                                alert(`Connection Rejected: Pin name mismatch.\nNo exact case-sensitive match found for pin "${cableNames[i]}" in the Connector.`);
+                                activePinSource = null;
+                                updateStatusBar();
+                                return;
+                            }
+                        }
+                    }
 
                     // Remove existing wire to target input pin if it exists (one connection limit per input pin)
                     for (const wire of circuit.wires.values()) {
@@ -287,6 +476,53 @@ function setupCanvasEvents() {
         e.preventDefault();
     });
 
+    canvas.addEventListener("dblclick", (e) => {
+        const world = workspace.screenToWorld(e.clientX, e.clientY);
+
+        // 1. Check if double-clicked near a bend point handle of selected wire
+        for (const wire of selectionManager.selectedWires) {
+            if (wire.points && wire.points.length > 2) {
+                for (let i = 1; i < wire.points.length - 1; i++) {
+                    const pt = wire.points[i];
+                    const dist = Math.hypot(world.x - pt.x, world.y - pt.y);
+                    if (dist <= 8) {
+                        // Delete this bend point!
+                        wire.points.splice(i, 1);
+                        wire.isManuallyRouted = true;
+                        saveHistoryState();
+                        updatePropertiesPanel();
+                        e.preventDefault();
+                        return;
+                    }
+                }
+            }
+        }
+
+        // 2. Check if double-clicked on any segment of a wire to ADD a bend point!
+        for (const wire of circuit.wires.values()) {
+            if (wire.points && wire.points.length >= 2) {
+                for (let i = 0; i < wire.points.length - 1; i++) {
+                    const p1 = wire.points[i];
+                    const p2 = wire.points[i+1];
+                    if (isPointNearSegment(world.x, world.y, p1, p2, 6)) {
+                        // Insert a new bend point at the snapped click position
+                        const newPt = {
+                            x: workspace.snap(world.x),
+                            y: workspace.snap(world.y)
+                        };
+                        wire.points.splice(i + 1, 0, newPt);
+                        wire.isManuallyRouted = true;
+                        selectionManager.selectSingleWire(wire);
+                        saveHistoryState();
+                        updatePropertiesPanel();
+                        e.preventDefault();
+                        return;
+                    }
+                }
+            }
+        }
+    });
+
     canvas.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         const menu = document.getElementById("canvas-context-menu");
@@ -317,10 +553,9 @@ function findComponentAt(wx, wy) {
 function findPinAt(wx, wy) {
     for (const comp of circuit.components.values()) {
         for (const pin of comp.pins()) {
-            const px = comp.x + pin.relX;
-            const py = comp.y + pin.relY;
-            const dist = Math.hypot(wx - px, wy - py);
-            if (dist <= 6) {
+            const pos = comp.getPinAbsolutePosition(pin);
+            const dist = Math.hypot(wx - pos.x, wy - pos.y);
+            if (dist <= 8) {
                 return { pin, component: comp };
             }
         }
@@ -349,6 +584,212 @@ function updateMarqueeSelection() {
             selectionManager.selectedComponents.add(comp);
         }
     }
+}
+
+/**
+ * Save Project Modal Workflow
+ */
+function triggerSaveProjectDialog() {
+    const html = `
+        <div class="form-group" style="margin-bottom: 20px;">
+            <label for="save-project-name">Project Name</label>
+            <input type="text" id="save-project-name" placeholder="e.g. my_project" style="width: 100%; padding: 8px 10px; font-size: 14px; background-color: #252525; border: 1px solid #3d3d3d; border-radius: 4px; color: #fff; outline: none;" value="my_project">
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" id="btn-save-cancel">Cancel</button>
+            <button class="btn btn-primary" id="btn-save-confirm">Save</button>
+        </div>
+    `;
+
+    openModal('<i class="fa-solid fa-floppy-disk"></i> Save Project', html, () => {
+        const input = document.getElementById("save-project-name");
+        if (input) {
+            input.focus();
+            input.select();
+        }
+
+        document.getElementById("btn-save-cancel").addEventListener("click", closeModal);
+
+        const performSave = () => {
+            const name = input.value.trim();
+            if (!name) {
+                alert("Please enter a valid project name.");
+                return;
+            }
+
+            fetch("/api/projects")
+            .then(res => res.json())
+            .then(data => {
+                const exists = data.projects && data.projects.includes(name);
+                if (exists) {
+                    const confirmHtml = `
+                        <p style="margin-bottom: 20px; font-size: 13.5px; line-height: 1.5; color: #ddd;">
+                            A project named <strong>${name}</strong> already exists. Overwrite?
+                        </p>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" id="btn-overwrite-cancel">Cancel</button>
+                            <button class="btn btn-danger" id="btn-overwrite-confirm">Overwrite</button>
+                        </div>
+                    `;
+                    openModal('<i class="fa-solid fa-triangle-exclamation" style="color: #ff9f43;"></i> Overwrite Project?', confirmHtml, () => {
+                        document.getElementById("btn-overwrite-cancel").addEventListener("click", () => {
+                            triggerSaveProjectDialog();
+                        });
+
+                        document.getElementById("btn-overwrite-confirm").addEventListener("click", () => {
+                            saveProjectPayload(name);
+                        });
+                    });
+                } else {
+                    saveProjectPayload(name);
+                }
+            });
+        };
+
+        document.getElementById("btn-save-confirm").addEventListener("click", performSave);
+
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                performSave();
+            }
+        });
+    });
+}
+
+function saveProjectPayload(name) {
+    const payload = serializeCircuit(circuit, registry);
+    fetch(`/api/projects/${encodeURIComponent(name)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    })
+    .then(res => res.json())
+    .then(data => {
+        closeModal();
+        alert(data.message || "Project saved successfully!");
+    })
+    .catch(err => console.error("Error saving:", err));
+}
+
+/**
+ * Load Project Modal Workflow
+ */
+function triggerLoadProjectDialog() {
+    fetch("/api/projects")
+    .then(res => res.json())
+    .then(data => {
+        const projects = data.projects || [];
+
+        let listHtml = "";
+        if (projects.length === 0) {
+            listHtml = `<p class="placeholder-text">No saved projects found.</p>`;
+        } else {
+            listHtml = `
+                <div class="search-box" style="margin: 0 0 10px 0;">
+                    <i class="fa-solid fa-magnifying-glass search-icon" style="left: 10px; top: 12px;"></i>
+                    <input type="text" id="load-project-search" placeholder="Search saved projects..." style="width: 100%; padding: 8px 10px 8px 30px; font-size: 13px; background-color: #252525; border: 1px solid #3d3d3d; border-radius: 4px; color: #fff; outline: none;">
+                </div>
+                <div class="modal-list-container" id="load-list-container">
+                    ${projects.map(name => `
+                        <div class="modal-list-item" data-name="${name}">
+                            <div class="modal-item-info">
+                                <span class="modal-item-name">${name}</span>
+                                <span class="modal-item-date">Local Project File</span>
+                            </div>
+                            <button class="modal-item-delete-btn" data-name="${name}" title="Delete project">
+                                <i class="fa-solid fa-trash-can"></i>
+                            </button>
+                        </div>
+                    `).join("")}
+                </div>
+            `;
+        }
+
+        const html = `
+            ${listHtml}
+            <div class="modal-footer" style="margin-top: 20px;">
+                <button class="btn btn-secondary" id="btn-load-cancel" style="width: 100%;">Cancel</button>
+            </div>
+        `;
+
+        openModal('<i class="fa-solid fa-folder-open"></i> Load Project', html, () => {
+            document.getElementById("btn-load-cancel").addEventListener("click", closeModal);
+
+            const searchInput = document.getElementById("load-project-search");
+            if (searchInput) {
+                searchInput.addEventListener("input", (e) => {
+                    const q = e.target.value.toLowerCase().trim();
+                    const items = document.querySelectorAll(".modal-list-item");
+                    items.forEach(item => {
+                        const name = item.getAttribute("data-name").toLowerCase();
+                        if (name.includes(q)) {
+                            item.style.display = "flex";
+                        } else {
+                            item.style.display = "none";
+                        }
+                    });
+                });
+            }
+
+            const items = document.querySelectorAll(".modal-list-item");
+            items.forEach(item => {
+                item.addEventListener("click", (e) => {
+                    if (e.target.closest(".modal-item-delete-btn")) return;
+                    const name = item.getAttribute("data-name");
+                    loadProjectPayload(name);
+                });
+            });
+
+            const delBtns = document.querySelectorAll(".modal-item-delete-btn");
+            delBtns.forEach(btn => {
+                btn.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    const name = btn.getAttribute("data-name");
+
+                    const deleteConfirmHtml = `
+                        <p style="margin-bottom: 20px; font-size: 13.5px; line-height: 1.5; color: #ddd;">
+                            Are you sure you want to permanently delete project <strong>${name}</strong>?
+                        </p>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" id="btn-delete-confirm-cancel">Cancel</button>
+                            <button class="btn btn-danger" id="btn-delete-confirm-ok">Delete</button>
+                        </div>
+                    `;
+                    openModal('<i class="fa-solid fa-trash-can" style="color: #e74c3c;"></i> Delete Project?', deleteConfirmHtml, () => {
+                        document.getElementById("btn-delete-confirm-cancel").addEventListener("click", () => {
+                            triggerLoadProjectDialog();
+                        });
+
+                        document.getElementById("btn-delete-confirm-ok").addEventListener("click", () => {
+                            fetch(`/api/projects/${encodeURIComponent(name)}`, { method: "DELETE" })
+                            .then(res => res.json())
+                            .then(() => {
+                                triggerLoadProjectDialog();
+                            });
+                        });
+                    });
+                });
+            });
+        });
+    });
+}
+
+function loadProjectPayload(name) {
+    fetch(`/api/projects/${encodeURIComponent(name)}`)
+    .then(res => {
+        if (!res.ok) throw new Error("Project file not found");
+        return res.json();
+    })
+    .then(data => {
+        deserializeCircuit(data, circuit, registry);
+        engine.evaluateAll();
+        saveHistoryState();
+        rebuildCustomModulesList();
+        updatePropertiesPanel();
+        updateStatusBar();
+        closeModal();
+    })
+    .catch(err => alert(err.message));
 }
 
 /**
@@ -397,50 +838,35 @@ function setupUIEvents() {
 
     // Header buttons
     document.getElementById("btn-new-circuit").addEventListener("click", () => {
-        if (confirm("Are you sure you want to clear the entire circuit workspace?")) {
-            circuit.clear();
-            selectionManager.clear();
-            engine.evaluateAll();
-            saveHistoryState();
-            updatePropertiesPanel();
-            updateStatusBar();
-        }
+        const confirmHtml = `
+            <p style="margin-bottom: 20px; font-size: 13.5px; line-height: 1.5; color: #ddd;">
+                Are you sure you want to clear the entire circuit workspace? This will delete all components and wires.
+            </p>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-clear-cancel">Cancel</button>
+                <button class="btn btn-danger" id="btn-clear-confirm">Clear Workspace</button>
+            </div>
+        `;
+        openModal('<i class="fa-solid fa-triangle-exclamation" style="color: #ff9f43;"></i> Clear Workspace?', confirmHtml, () => {
+            document.getElementById("btn-clear-cancel").addEventListener("click", closeModal);
+            document.getElementById("btn-clear-confirm").addEventListener("click", () => {
+                circuit.clear();
+                selectionManager.clear();
+                engine.evaluateAll();
+                saveHistoryState();
+                updatePropertiesPanel();
+                updateStatusBar();
+                closeModal();
+            });
+        });
     });
 
     document.getElementById("btn-save-project").addEventListener("click", () => {
-        const name = prompt("Enter project name to save:", "my_project");
-        if (!name) return;
-
-        const payload = serializeCircuit(circuit, registry);
-        fetch(`/api/projects/${encodeURIComponent(name)}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        })
-        .then(res => res.json())
-        .then(data => alert(data.message || data.error))
-        .catch(err => console.error("Error saving:", err));
+        triggerSaveProjectDialog();
     });
 
     document.getElementById("btn-load-project").addEventListener("click", () => {
-        const name = prompt("Enter project name to load:");
-        if (!name) return;
-
-        fetch(`/api/projects/${encodeURIComponent(name)}`)
-        .then(res => {
-            if (!res.ok) throw new Error("Project file not found");
-            return res.json();
-        })
-        .then(data => {
-            deserializeCircuit(data, circuit, registry);
-            engine.evaluateAll();
-            saveHistoryState();
-            rebuildCustomModulesList();
-            updatePropertiesPanel();
-            updateStatusBar();
-            alert("Project loaded successfully!");
-        })
-        .catch(err => alert(err.message));
+        triggerLoadProjectDialog();
     });
 
     // CUSTOM MODULE CREATION WORKFLOW
@@ -496,6 +922,7 @@ function setupUIEvents() {
         const name = document.getElementById("module-name").value.trim();
         const desc = document.getElementById("module-desc").value.trim();
         const cat = document.getElementById("module-category").value.trim();
+        const moduleType = document.getElementById("module-type").value;
 
         if (!name) return;
 
@@ -540,7 +967,7 @@ function setupUIEvents() {
         });
 
         // Create and register the Definition
-        const newDef = new ModuleDefinition(modId, name, desc, cat, externalInputs, externalOutputs, subComps, subWires);
+        const newDef = new ModuleDefinition(modId, name, desc, cat, externalInputs, externalOutputs, subComps, subWires, moduleType);
         registry.register(newDef);
 
         // Save to backend custom modules file
@@ -555,7 +982,8 @@ function setupUIEvents() {
                 inputs: externalInputs,
                 outputs: externalOutputs,
                 components: subComps,
-                wires: subWires
+                wires: subWires,
+                moduleType: moduleType
             })
         })
         .then(res => res.json())
@@ -633,8 +1061,16 @@ function updatePropertiesPanel() {
         } else if (comp.type === "Clock") {
             customControlsHtml = `
                 <div class="property-row">
-                    <label for="comp-prop-clock">Delay (ms)</label>
-                    <input type="number" id="comp-prop-clock" value="${comp.intervalMs || 1000}" min="100">
+                    <label for="comp-prop-clock-freq">Frequency</label>
+                    <div style="display: flex; gap: 5px; width: 120px;">
+                        <input type="number" id="comp-prop-clock-freq" value="${comp.frequencyValue !== undefined ? comp.frequencyValue : 1}" step="any" min="0.000001" style="width: 65px; min-width: 0; padding: 4px;">
+                        <select id="comp-prop-clock-unit" style="width: 50px; min-width: 0; padding: 2px; font-size: 11px;">
+                            <option value="Hz" ${comp.frequencyUnit === "Hz" ? "selected" : ""}>Hz</option>
+                            <option value="kHz" ${comp.frequencyUnit === "kHz" ? "selected" : ""}>kHz</option>
+                            <option value="MHz" ${comp.frequencyUnit === "MHz" ? "selected" : ""}>MHz</option>
+                            <option value="GHz" ${comp.frequencyUnit === "GHz" ? "selected" : ""}>GHz</option>
+                        </select>
+                    </div>
                 </div>
             `;
         } else if (comp.type === "LED") {
@@ -653,6 +1089,26 @@ function updatePropertiesPanel() {
                     <input type="text" id="comp-prop-led-rgba" value="${comp.rgbaValue || "rgba(255, 242, 0, 0.8)"}">
                 </div>
             `;
+        } else if (comp.type === "Button") {
+            customControlsHtml = `
+                <div class="property-row">
+                    <label for="comp-prop-btn-mode">Mode</label>
+                    <select id="comp-prop-btn-mode">
+                        <option value="press" ${comp.buttonMode === "press" ? "selected" : ""}>Press (Toggle)</option>
+                        <option value="hold" ${comp.buttonMode === "hold" ? "selected" : ""}>Hold (Momentary)</option>
+                    </select>
+                </div>
+                <div id="btn-hold-row" class="property-row" style="display: ${comp.buttonMode === "hold" ? "flex" : "none"};">
+                    <label for="comp-prop-btn-duration">Hold Duration</label>
+                    <div style="display: flex; gap: 5px; width: 120px;">
+                        <input type="number" id="comp-prop-btn-duration" value="${comp.holdUnit === "s" ? comp.holdDuration / 1000 : comp.holdDuration}" step="any" min="0.001" style="width: 65px; min-width: 0; padding: 4px;">
+                        <select id="comp-prop-btn-unit" style="width: 50px; min-width: 0; padding: 2px; font-size: 11px;">
+                            <option value="ms" ${comp.holdUnit === "ms" ? "selected" : ""}>ms</option>
+                            <option value="s" ${comp.holdUnit === "s" ? "selected" : ""}>s</option>
+                        </select>
+                    </div>
+                </div>
+            `;
         }
 
         // Rotation control HTML (always displayed for single component)
@@ -665,6 +1121,20 @@ function updatePropertiesPanel() {
                     <option value="180" ${comp.rotation === 180 ? "selected" : ""}>180°</option>
                     <option value="270" ${comp.rotation === 270 ? "selected" : ""}>270° (Counter-CW)</option>
                 </select>
+            </div>
+        `;
+
+        let flipControlHtml = `
+            <div class="property-row">
+                <label>Flipping</label>
+                <div style="display: flex; gap: 10px;">
+                    <label style="font-size: 11px; display: flex; align-items: center; gap: 4px; color: #ccc;">
+                        <input type="checkbox" id="comp-prop-flip-x" ${comp.flipX ? "checked" : ""}> Flip H
+                    </label>
+                    <label style="font-size: 11px; display: flex; align-items: center; gap: 4px; color: #ccc;">
+                        <input type="checkbox" id="comp-prop-flip-y" ${comp.flipY ? "checked" : ""}> Flip V
+                    </label>
+                </div>
             </div>
         `;
 
@@ -730,6 +1200,7 @@ function updatePropertiesPanel() {
                     <input type="text" id="comp-prop-label" value="${comp.label || ""}">
                 </div>
                 ${rotationControlHtml}
+                ${flipControlHtml}
                 ${customControlsHtml}
                 <button id="btn-comp-delete-single" class="btn btn-danger" style="width: 100%; margin-top: 10px;"><i class="fa-solid fa-trash"></i> Delete Gate</button>
             </div>
@@ -749,6 +1220,17 @@ function updatePropertiesPanel() {
             saveHistoryState();
         });
 
+        // Flip listeners
+        document.getElementById("comp-prop-flip-x").addEventListener("change", (e) => {
+            comp.flipX = e.target.checked;
+            saveHistoryState();
+        });
+
+        document.getElementById("comp-prop-flip-y").addEventListener("change", (e) => {
+            comp.flipY = e.target.checked;
+            saveHistoryState();
+        });
+
         if (comp.type === "Input") {
             document.getElementById("comp-prop-state").addEventListener("change", (e) => {
                 comp.stateValue = parseInt(e.target.value);
@@ -758,10 +1240,26 @@ function updatePropertiesPanel() {
         }
 
         if (comp.type === "Clock") {
-            document.getElementById("comp-prop-clock").addEventListener("input", (e) => {
-                comp.intervalMs = parseInt(e.target.value) || 1000;
+            const freqInput = document.getElementById("comp-prop-clock-freq");
+            const unitSelect = document.getElementById("comp-prop-clock-unit");
+
+            const onFreqChange = () => {
+                let val = parseFloat(freqInput.value);
+                if (isNaN(val) || val <= 0) val = 1;
+
+                comp.frequencyValue = val;
+                comp.frequencyUnit = unitSelect.value;
+                comp.updateFrequency();
+
+                // Keep values synchronized on input elements
+                freqInput.value = comp.frequencyValue;
+                unitSelect.value = comp.frequencyUnit;
+
                 saveHistoryState();
-            });
+            };
+
+            freqInput.addEventListener("input", onFreqChange);
+            unitSelect.addEventListener("change", onFreqChange);
         }
 
         if (comp.type === "LED") {
@@ -779,6 +1277,39 @@ function updatePropertiesPanel() {
                 comp.rgbaValue = e.target.value.trim() || "rgba(255, 242, 0, 0.8)";
                 saveHistoryState();
             });
+        }
+
+        if (comp.type === "Button") {
+            const modeSelect = document.getElementById("comp-prop-btn-mode");
+            const holdRow = document.getElementById("btn-hold-row");
+            const durationInput = document.getElementById("comp-prop-btn-duration");
+            const unitSelect = document.getElementById("comp-prop-btn-unit");
+
+            modeSelect.addEventListener("change", (e) => {
+                comp.buttonMode = e.target.value;
+                if (comp.buttonMode === "hold") {
+                    holdRow.style.display = "flex";
+                } else {
+                    holdRow.style.display = "none";
+                }
+                saveHistoryState();
+            });
+
+            const onDurationChange = () => {
+                let val = parseFloat(durationInput.value);
+                if (isNaN(val) || val <= 0) val = 1;
+
+                comp.holdUnit = unitSelect.value;
+                if (comp.holdUnit === "s") {
+                    comp.holdDuration = val * 1000;
+                } else {
+                    comp.holdDuration = val;
+                }
+                saveHistoryState();
+            };
+
+            durationInput.addEventListener("input", onDurationChange);
+            unitSelect.addEventListener("change", onDurationChange);
         }
 
         document.getElementById("btn-comp-delete-single").addEventListener("click", () => {
@@ -981,6 +1512,13 @@ function setupKeyboardShortcuts() {
             e.preventDefault();
             triggerDelete();
         }
+        else if (isCtrl && e.shiftKey && e.key.toLowerCase() === "z") {
+            e.preventDefault();
+            const next = historyManager.redo(JSON.stringify(serializeCircuit(circuit, registry)));
+            if (next) {
+                restoreState(next);
+            }
+        }
         else if (isCtrl && e.key.toLowerCase() === "z") {
             e.preventDefault();
             const prev = historyManager.undo(JSON.stringify(serializeCircuit(circuit, registry)));
@@ -994,6 +1532,23 @@ function setupKeyboardShortcuts() {
             if (next) {
                 restoreState(next);
             }
+        }
+        else if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") {
+            e.preventDefault();
+            let dx = 0, dy = 0;
+            if (e.key === "ArrowLeft") dx = -1;
+            else if (e.key === "ArrowRight") dx = 1;
+            else if (e.key === "ArrowUp") dy = -1;
+            else if (e.key === "ArrowDown") dy = 1;
+
+            for (const comp of selectionManager.selectedComponents) {
+                comp.x += dx;
+                comp.y += dy;
+                if (comp.type === "UserModule") {
+                    comp.pins().forEach(p => comp.applyPinSideMath(p));
+                }
+            }
+            saveHistoryState();
         }
         else if (e.key.toLowerCase() === "r") {
             e.preventDefault();
@@ -1187,4 +1742,70 @@ function render() {
     }
 
     ctx.restore();
+}
+
+/**
+ * Perform 1 kHz visual evaluation of gate animated states.
+ */
+function updateVisualValues(elapsedMs) {
+    // 1. Set Clock output visualValue
+    for (const comp of circuit.components.values()) {
+        if (comp.type === "Clock") {
+            if (comp.frequency <= 1000) {
+                // Low frequency: visual matches exact value
+                comp.outputs[0].visualValue = comp.outputs[0].value;
+            } else {
+                // High frequency: toggle visual value at exactly 1 kHz (half period = 0.5 ms)
+                if (!comp.lastVisualToggle) comp.lastVisualToggle = 0;
+                comp.lastVisualToggle += elapsedMs;
+                if (comp.lastVisualToggle >= 0.5) {
+                    comp.lastVisualToggle = 0;
+                    comp.visualState = comp.visualState === 1 ? 0 : 1;
+                }
+                comp.outputs[0].visualValue = comp.visualState || 0;
+            }
+        } else if (comp.type === "Input") {
+            comp.outputs[0].visualValue = comp.outputs[0].value;
+        } else if (comp.type === "Constant HIGH") {
+            comp.outputs[0].visualValue = 1;
+        } else if (comp.type === "Constant LOW") {
+            comp.outputs[0].visualValue = 0;
+        }
+    }
+
+    // 2. Propagate through wires
+    for (const wire of circuit.wires.values()) {
+        if (wire.fromPin && wire.toPin) {
+            wire.toPin.visualValue = wire.fromPin.visualValue;
+        }
+    }
+
+    // 3. Multi-pass evaluation of gates for visual rendering
+    for (let pass = 0; pass < 4; pass++) {
+        for (const comp of circuit.components.values()) {
+            if (comp.type !== "Clock" && comp.type !== "Input" && comp.type !== "Constant HIGH" && comp.type !== "Constant LOW") {
+                // Save original value states
+                const savedInputs = comp.inputs.map(p => p.value);
+                const savedOutputs = comp.outputs.map(p => p.value);
+
+                // Temporarily assign visualValues to run evaluate()
+                comp.inputs.forEach(p => p.value = p.visualValue || 0);
+
+                comp.evaluate();
+
+                // Save resulting evaluation output back to visualValue
+                comp.outputs.forEach(p => p.visualValue = p.value);
+
+                // Restore simulation state
+                comp.inputs.forEach((p, idx) => p.value = savedInputs[idx]);
+                comp.outputs.forEach((p, idx) => p.value = savedOutputs[idx]);
+            }
+        }
+        // Propagate intermediate visualValues
+        for (const wire of circuit.wires.values()) {
+            if (wire.fromPin && wire.toPin) {
+                wire.toPin.visualValue = wire.fromPin.visualValue;
+            }
+        }
+    }
 }

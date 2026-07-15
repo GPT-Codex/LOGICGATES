@@ -37,7 +37,7 @@ export function computeManhattanRoute(x1, y1, x2, y2) {
 /**
  * Checks if a point (wx, wy) is close to a line segment between p1 and p2.
  */
-function isPointNearSegment(wx, wy, p1, p2, threshold) {
+export function isPointNearSegment(wx, wy, p1, p2, threshold) {
     const minX = Math.min(p1.x, p2.x) - threshold;
     const maxX = Math.max(p1.x, p2.x) + threshold;
     const minY = Math.min(p1.y, p2.y) - threshold;
@@ -105,12 +105,20 @@ export function drawWire(ctx, wire, isSelected) {
     const x2 = p2.x;
     const y2 = p2.y;
 
-    // Recalculate route points dynamically
-    wire.points = computeManhattanRoute(x1, y1, x2, y2);
+    if (!wire.isManuallyRouted) {
+        wire.points = computeManhattanRoute(x1, y1, x2, y2);
+    } else {
+        if (wire.points && wire.points.length >= 2) {
+            wire.points[0] = { x: x1, y: y1 };
+            wire.points[wire.points.length - 1] = { x: x2, y: y2 };
+        } else {
+            wire.points = computeManhattanRoute(x1, y1, x2, y2);
+        }
+    }
 
     ctx.save();
 
-    const isHigh = wire.value === 1;
+    const isHigh = wire.visualValue === 1;
 
     // Choose wire colors
     let baseColor = "#5c6b73"; // Default LOW state color
@@ -169,6 +177,18 @@ export function drawWire(ctx, wire, isSelected) {
         ctx.beginPath();
         ctx.arc(wire.points[i].x, wire.points[i].y, 2.5, 0, 2 * Math.PI);
         ctx.fill();
+    }
+
+    // 4. Draw editable bend handles if selected
+    if (isSelected && wire.points.length > 2) {
+        ctx.fillStyle = "#00adb5";
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1;
+        for (let i = 1; i < wire.points.length - 1; i++) {
+            const pt = wire.points[i];
+            ctx.fillRect(pt.x - 4, pt.y - 4, 8, 8);
+            ctx.strokeRect(pt.x - 4, pt.y - 4, 8, 8);
+        }
     }
 
     ctx.restore();

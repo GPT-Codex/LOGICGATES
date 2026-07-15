@@ -17,8 +17,9 @@ export const SKINS = {
  * Helper to draw a standard logic gate symbol body (American National Standards / IEEE format-like curves)
  * or beautiful stylized card shapes.
  */
-function drawStyledGate(ctx, bbox, type, skin, isSelected) {
+function drawStyledGate(ctx, bbox, type, skin, isSelected, flipX = false, flipY = false) {
     ctx.save();
+    ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
     if (isSelected) {
         ctx.shadowBlur = 12;
         ctx.shadowColor = skin.border;
@@ -279,11 +280,30 @@ export class ClockGate extends Component {
         this.width = 50;
         this.height = 30;
         this.stateValue = 0;
-        this.intervalMs = 1000; // default 1 second toggle
+        this.frequencyValue = 1; // default 1 Hz
+        this.frequencyUnit = "Hz"; // default Hz
+        this.frequency = 1; // calculated Hz
 
         const outPin = this.addOutput(`${id}_out`, "CLK");
         outPin.relX = 25;
         outPin.relY = 0;
+
+        this.updateFrequency();
+    }
+
+    updateFrequency() {
+        let mult = 1;
+        if (this.frequencyUnit === "kHz") mult = 1e3;
+        else if (this.frequencyUnit === "MHz") mult = 1e6;
+        else if (this.frequencyUnit === "GHz") mult = 1e9;
+
+        let hz = this.frequencyValue * mult;
+        if (hz > 10e9) {
+            hz = 10e9;
+            this.frequencyValue = 10;
+            this.frequencyUnit = "GHz";
+        }
+        this.frequency = hz;
     }
 
     evaluate() {
@@ -474,7 +494,7 @@ export class ANDGate extends Component {
 
         const skin = SKINS.AND_NAND;
         const bbox = { x: -this.width / 2, y: -this.height / 2, width: this.width, height: this.height };
-        drawStyledGate(ctx, bbox, "AND", skin, isSelected);
+        drawStyledGate(ctx, bbox, "AND", skin, isSelected, this.flipX, this.flipY);
 
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 11px sans-serif";
@@ -517,7 +537,7 @@ export class ORGate extends Component {
 
         const skin = SKINS.OR_NOR;
         const bbox = { x: -this.width / 2, y: -this.height / 2, width: this.width, height: this.height };
-        drawStyledGate(ctx, bbox, "OR", skin, isSelected);
+        drawStyledGate(ctx, bbox, "OR", skin, isSelected, this.flipX, this.flipY);
 
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 11px sans-serif";
@@ -560,7 +580,7 @@ export class XORGate extends Component {
 
         const skin = SKINS.XOR_XNOR;
         const bbox = { x: -this.width / 2, y: -this.height / 2, width: this.width, height: this.height };
-        drawStyledGate(ctx, bbox, "XOR", skin, isSelected);
+        drawStyledGate(ctx, bbox, "XOR", skin, isSelected, this.flipX, this.flipY);
 
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 11px sans-serif";
@@ -603,8 +623,10 @@ export class NANDGate extends Component {
 
         const skin = SKINS.AND_NAND;
         const bbox = { x: -this.width / 2, y: -this.height / 2, width: this.width - 6, height: this.height };
-        drawStyledGate(ctx, bbox, "AND", skin, isSelected);
+        drawStyledGate(ctx, bbox, "AND", skin, isSelected, this.flipX, this.flipY);
 
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
         ctx.strokeStyle = skin.border;
         ctx.lineWidth = 1.5;
         ctx.fillStyle = skin.bg;
@@ -612,6 +634,7 @@ export class NANDGate extends Component {
         ctx.arc(bbox.x + bbox.width + 3, 0, 3.5, 0, 2 * Math.PI);
         ctx.fill();
         ctx.stroke();
+        ctx.restore();
 
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 10px sans-serif";
@@ -654,8 +677,10 @@ export class NORGate extends Component {
 
         const skin = SKINS.OR_NOR;
         const bbox = { x: -this.width / 2, y: -this.height / 2, width: this.width - 6, height: this.height };
-        drawStyledGate(ctx, bbox, "OR", skin, isSelected);
+        drawStyledGate(ctx, bbox, "OR", skin, isSelected, this.flipX, this.flipY);
 
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
         ctx.strokeStyle = skin.border;
         ctx.lineWidth = 1.5;
         ctx.fillStyle = skin.bg;
@@ -663,6 +688,7 @@ export class NORGate extends Component {
         ctx.arc(bbox.x + bbox.width + 3, 0, 3.5, 0, 2 * Math.PI);
         ctx.fill();
         ctx.stroke();
+        ctx.restore();
 
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 10px sans-serif";
@@ -705,8 +731,10 @@ export class XNORGate extends Component {
 
         const skin = SKINS.XOR_XNOR;
         const bbox = { x: -this.width / 2, y: -this.height / 2, width: this.width - 6, height: this.height };
-        drawStyledGate(ctx, bbox, "XOR", skin, isSelected);
+        drawStyledGate(ctx, bbox, "XOR", skin, isSelected, this.flipX, this.flipY);
 
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
         ctx.strokeStyle = skin.border;
         ctx.lineWidth = 1.5;
         ctx.fillStyle = skin.bg;
@@ -714,6 +742,7 @@ export class XNORGate extends Component {
         ctx.arc(bbox.x + bbox.width + 3, 0, 3.5, 0, 2 * Math.PI);
         ctx.fill();
         ctx.stroke();
+        ctx.restore();
 
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 10px sans-serif";
@@ -922,6 +951,123 @@ export class TenSegmentGate extends Component {
     }
 }
 
+export class ButtonGate extends Component {
+    constructor(id, x, y) {
+        super(id, "Button", x, y);
+        this.width = 50;
+        this.height = 30;
+
+        // Pins
+        const inPin = this.addInput(`${id}_in`, "In"); // Power Input
+        inPin.relX = -25;
+        inPin.relY = 0;
+
+        const outPin = this.addOutput(`${id}_out`, "Out"); // Signal Output
+        outPin.relX = 25;
+        outPin.relY = 0;
+
+        // Custom states
+        this.buttonMode = "press"; // "press" (Toggle) or "hold" (Momentary)
+        this.holdDuration = 1000; // in milliseconds
+        this.holdUnit = "ms"; // "ms" or "s"
+        this.toggleState = false; // Toggle state (retained in Toggle mode)
+        this.isPressed = false; // Is currently physically pressed down (either in hold mode or temporarily during mouse action)
+    }
+
+    evaluate() {
+        // Electrical Behavior: Output reflects the input only when the button is in its active state (either toggled ON or momentarily pressed).
+        const hasPower = this.inputs[0].value === 1;
+        const isActiveState = (this.buttonMode === "press" && this.toggleState) || (this.buttonMode === "hold" && this.isPressed);
+
+        this.outputs[0].value = (hasPower && isActiveState) ? 1 : 0;
+    }
+
+    triggerClick(engine) {
+        if (this.buttonMode === "press") {
+            // Press (Toggle) Mode
+            this.toggleState = !this.toggleState;
+            this.evaluate();
+            engine.propagatePin(this.outputs[0]);
+            engine.propagate();
+        } else {
+            // Hold (Momentary) Mode
+            this.isPressed = true;
+            this.evaluate();
+            engine.propagatePin(this.outputs[0]);
+            engine.propagate();
+
+            // Clear previous timeout if any
+            if (this.holdTimeout) {
+                clearTimeout(this.holdTimeout);
+            }
+
+            // After holdDuration expires, automatically return to previous state
+            this.holdTimeout = setTimeout(() => {
+                this.isPressed = false;
+                this.evaluate();
+                engine.propagatePin(this.outputs[0]);
+                engine.propagate();
+                this.holdTimeout = null;
+            }, this.holdDuration);
+        }
+    }
+
+    draw(ctx, isSelected) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
+
+        const isActive = (this.buttonMode === "press" && this.toggleState) || (this.buttonMode === "hold" && this.isPressed);
+        const isPressedVisual = this.isPressed; // visual feedback of pressing
+
+        if (isSelected) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#00adb5";
+            ctx.strokeStyle = "#00adb5";
+            ctx.lineWidth = 2.5;
+        } else {
+            ctx.strokeStyle = "#4e4e4e";
+            ctx.lineWidth = 1.5;
+        }
+
+        // 1. Draw outer button casing (black/dark base with metallic highlight)
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.fillStyle = "#1e1e1e";
+        ctx.beginPath();
+        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        // 2. Draw actual inner push plunger
+        let plungerCol = "#333333"; // OFF state
+        if (isActive) {
+            plungerCol = isPressedVisual ? "#00e676" : "#2ecc71"; // ON active states (Pressed glows brighter green)
+        } else if (isPressedVisual) {
+            plungerCol = "#e74c3c"; // Pressed but no power: glows red
+        }
+
+        ctx.fillStyle = plungerCol;
+        ctx.beginPath();
+        // Shift slightly in position if visually pressed to simulate depth!
+        const shiftY = isPressedVisual ? 1 : 0;
+        ctx.roundRect(-this.width / 2 + 6, -this.height / 2 + 6 + shiftY, this.width - 12, this.height - 12, 4);
+        ctx.fill();
+        ctx.restore();
+
+        // 3. Draw text label centered
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 10px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(this.label || "BTN", 0, 0);
+
+        ctx.restore();
+
+        this.drawPins(ctx);
+    }
+}
+
 /**
  * Mapping of component types to their constructor classes.
  */
@@ -941,7 +1087,8 @@ export const COMPONENT_REGISTRY = {
     "XNOR": XNORGate,
     "LED": LEDGate,
     "7-Segment Display": SevenSegmentGate,
-    "10-Segment Display": TenSegmentGate
+    "10-Segment Display": TenSegmentGate,
+    "Button": ButtonGate
 };
 
 /**

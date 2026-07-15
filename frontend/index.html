@@ -46,6 +46,7 @@
                         <div class="toolbox-item" data-type="Constant HIGH" title="Constant HIGH (1) signal"><span class="item-tag high-tag">1</span> Constant HIGH</div>
                         <div class="toolbox-item" data-type="Constant LOW" title="Constant LOW (0) signal"><span class="item-tag low-tag">0</span> Constant LOW</div>
                         <div class="toolbox-item" data-type="Clock" title="Generates alternating logic pulses"><i class="fa-solid fa-clock"></i> Clock</div>
+                        <div class="toolbox-item" data-type="Button" title="Push Button with Toggle/Momentary modes"><i class="fa-solid fa-toggle-on"></i> Button Switch</div>
                     </div>
                 </div>
 
@@ -147,6 +148,19 @@
         </div>
     </footer>
 
+    <!-- GENERIC REUSABLE IN-APP DIALOG MODAL -->
+    <div class="modal-overlay" id="generic-dialog-modal">
+        <div class="modal-content" id="generic-modal-content" style="width: 440px;">
+            <div class="modal-header">
+                <h3 id="generic-modal-title"><i class="fa-solid fa-circle-info"></i> Title</h3>
+                <button class="btn-close-modal" id="btn-close-generic-modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body" id="generic-modal-body">
+                <!-- Dynamically injected elements -->
+            </div>
+        </div>
+    </div>
+
     <!-- CREATE MODULE MODAL -->
     <div class="modal-overlay" id="create-module-modal">
         <div class="modal-content">
@@ -167,6 +181,14 @@
                     <div class="form-group">
                         <label for="module-category">Category</label>
                         <input type="text" id="module-category" placeholder="e.g. Arithmetic, Memory" value="Custom">
+                    </div>
+                    <div class="form-group">
+                        <label for="module-type">Module Type</label>
+                        <select id="module-type" style="width: 100%; background-color: #252525; border: 1px solid #3d3d3d; border-radius: 4px; color: #fff; padding: 8px 10px; font-size: 13px; outline: none;">
+                            <option value="Module">Module</option>
+                            <option value="Cable">Cable</option>
+                            <option value="Connector">Connector</option>
+                        </select>
                     </div>
 
                     <div class="pins-info-box">

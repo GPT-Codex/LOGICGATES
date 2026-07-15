@@ -15,8 +15,9 @@ export class ModuleDefinition {
      * @param {string[]} outputs - external output labels
      * @param {any[]} components - serialized inner components
      * @param {any[]} wires - serialized inner wires
+     * @param {string} moduleType - "Module", "Cable", "Connector"
      */
-    constructor(id, name, description, category, inputs, outputs, components, wires) {
+    constructor(id, name, description, category, inputs, outputs, components, wires, moduleType = "Module") {
         this.id = id;
         this.name = name;
         this.description = description;
@@ -25,6 +26,7 @@ export class ModuleDefinition {
         this.outputs = outputs; // array of strings
         this.components = components; // serialized data
         this.wires = wires;           // serialized data
+        this.moduleType = moduleType; // "Module", "Cable", "Connector"
     }
 }
 
@@ -190,11 +192,21 @@ export class UserModule extends Component {
      * Drawing the custom user module on canvas with pin labels inside.
      */
     draw(ctx, isSelected) {
-        const bbox = this.boundingBox();
-
         ctx.save();
-        const borderCol = "#8e44ad";
-        const bgCol = "#2b1b3d";
+        let borderCol = "#8e44ad";
+        let bgCol = "#2b1b3d";
+
+        if (this.definition && this.definition.moduleType === "Cable") {
+            bgCol = "#090909"; // Cable default color is Black
+            borderCol = "#444444";
+        } else if (this.definition && this.definition.moduleType === "Connector") {
+            bgCol = "#112233"; // Connector has distinct steel styling
+            borderCol = "#335577";
+        }
+
+        // Translate to component center and rotate!
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
 
         if (isSelected) {
             ctx.shadowBlur = 12;
@@ -208,9 +220,14 @@ export class UserModule extends Component {
 
         ctx.fillStyle = bgCol;
         ctx.beginPath();
-        ctx.roundRect(bbox.x, bbox.y, bbox.width, bbox.height, 8);
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 8);
         ctx.fill();
         ctx.stroke();
+        ctx.restore();
+
+        ctx.restore(); // restore to world coordinates before drawing pins and text
 
         // Draw outer pins
         this.drawPins(ctx);
@@ -221,28 +238,37 @@ export class UserModule extends Component {
         ctx.textBaseline = "middle";
 
         this.pins().forEach(pin => {
-            const pos = this.getPinAbsolutePosition(pin);
             const side = pin.side || "left";
 
             // Map pin screen coordinate relative to component center
-            const rx = pin.relX;
-            const ry = pin.relY;
+            const rx = this.flipX ? -pin.relX : pin.relX;
+            const ry = this.flipY ? -pin.relY : pin.relY;
+
+            let visualSide = side;
+            if (this.flipX) {
+                if (side === "left") visualSide = "right";
+                else if (side === "right") visualSide = "left";
+            }
+            if (this.flipY) {
+                if (side === "top") visualSide = "bottom";
+                else if (side === "bottom") visualSide = "top";
+            }
 
             ctx.save();
             ctx.translate(this.x, this.y);
             ctx.rotate((this.rotation * Math.PI) / 180);
 
-            if (side === "left") {
+            if (visualSide === "left") {
                 ctx.textAlign = "left";
                 ctx.fillText(pin.name, rx + 8, ry);
-            } else if (side === "right") {
+            } else if (visualSide === "right") {
                 ctx.textAlign = "right";
                 ctx.fillText(pin.name, rx - 8, ry);
-            } else if (side === "top") {
+            } else if (visualSide === "top") {
                 ctx.textAlign = "center";
                 ctx.textBaseline = "top";
                 ctx.fillText(pin.name, rx, ry + 8);
-            } else if (side === "bottom") {
+            } else if (visualSide === "bottom") {
                 ctx.textAlign = "center";
                 ctx.textBaseline = "bottom";
                 ctx.fillText(pin.name, rx, ry - 8);
@@ -259,8 +285,6 @@ export class UserModule extends Component {
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(this.label || this.definition.name, 0, 0);
-        ctx.restore();
-
         ctx.restore();
     }
 }

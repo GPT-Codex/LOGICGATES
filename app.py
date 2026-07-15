@@ -71,6 +71,20 @@ def save_project(name):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/projects/<name>", methods=["DELETE"])
+def delete_project(name):
+    try:
+        safe_name = os.path.basename(name) + ".json"
+        filepath = os.path.join(PROJECTS_DIR, safe_name)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+            return jsonify({"status": "success", "message": f"Project '{name}' deleted successfully"})
+        else:
+            return jsonify({"error": "Project not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # --- Custom Modules API ---
 
 

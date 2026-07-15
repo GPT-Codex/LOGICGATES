@@ -20,12 +20,29 @@ export function serializeCircuit(circuit, registry) {
             type: comp.type,
             x: comp.x,
             y: comp.y,
-            label: comp.label || ""
+            label: comp.label || "",
+            rotation: comp.rotation || 0,
+            flipX: comp.flipX || false,
+            flipY: comp.flipY || false
         };
 
-        // If it's a UserModule, save its definition's ID
-        if (comp.type === "UserModule" && comp.definition) {
+        if (comp.type === "Clock") {
+            serialized.frequencyValue = comp.frequencyValue || 1;
+            serialized.frequencyUnit = comp.frequencyUnit || "Hz";
+            serialized.intervalMs = comp.intervalMs || 1000;
+        } else if (comp.type === "LED") {
+            serialized.ledColor = comp.ledColor || "Red";
+            serialized.rgbaValue = comp.rgbaValue || "";
+        } else if (comp.type === "Button") {
+            serialized.buttonMode = comp.buttonMode || "press";
+            serialized.holdDuration = comp.holdDuration || 1000;
+        } else if (comp.type === "UserModule" && comp.definition) {
             serialized.definitionId = comp.definition.id;
+            serialized.pinPositions = comp.pins().map(p => ({
+                id: p.id,
+                side: p.side,
+                offset: p.offset
+            }));
         }
 
         components.push(serialized);
@@ -37,7 +54,9 @@ export function serializeCircuit(circuit, registry) {
             id: wire.id,
             fromPin: wire.fromPin.id,
             toPin: wire.toPin.id,
-            color: wire.color || null
+            color: wire.color || null,
+            isManuallyRouted: wire.isManuallyRouted || false,
+            points: wire.points || []
         });
     }
 
@@ -53,7 +72,8 @@ export function serializeCircuit(circuit, registry) {
                 inputs: def.inputs,
                 outputs: def.outputs,
                 components: def.components,
-                wires: def.wires
+                wires: def.wires,
+                moduleType: def.moduleType || "Module"
             });
         }
     }
@@ -85,7 +105,8 @@ export function deserializeCircuit(data, circuit, registry) {
                 defData.inputs,
                 defData.outputs,
                 defData.components,
-                defData.wires
+                defData.wires,
+                defData.moduleType || "Module"
             );
             registry.register(def);
         }
@@ -110,6 +131,36 @@ export function deserializeCircuit(data, circuit, registry) {
         }
 
         comp.label = compData.label || "";
+        comp.rotation = compData.rotation || 0;
+        comp.flipX = compData.flipX || false;
+        comp.flipY = compData.flipY || false;
+
+        if (comp.type === "Clock") {
+            if (compData.frequencyValue !== undefined) {
+                comp.frequencyValue = compData.frequencyValue;
+                comp.frequencyUnit = compData.frequencyUnit || "Hz";
+            } else if (compData.intervalMs !== undefined) {
+                // Backward compatibility from delay
+                comp.frequency = 500 / compData.intervalMs;
+                comp.frequencyValue = comp.frequency;
+                comp.frequencyUnit = "Hz";
+            }
+            if (compData.intervalMs !== undefined) {
+                comp.intervalMs = compData.intervalMs;
+            }
+            comp.updateFrequency();
+        } else if (comp.type === "LED") {
+            comp.ledColor = compData.ledColor || "Red";
+            comp.rgbaValue = compData.rgbaValue || "";
+        } else if (comp.type === "Button") {
+            comp.buttonMode = compData.buttonMode || "press";
+            comp.holdDuration = compData.holdDuration || 1000;
+        } else if (comp.type === "UserModule" && compData.pinPositions) {
+            compData.pinPositions.forEach(pos => {
+                comp.repositionPin(pos.id, pos.side, pos.offset);
+            });
+        }
+
         circuit.addComponent(comp);
 
         // Map pins
@@ -124,6 +175,8 @@ export function deserializeCircuit(data, circuit, registry) {
         const toPin = pinMap.get(wireData.toPin);
         if (fromPin && toPin) {
             const wire = new Wire(wireData.id, fromPin, toPin, wireData.color || null);
+            wire.isManuallyRouted = wireData.isManuallyRouted || false;
+            wire.points = wireData.points || [];
             circuit.addWire(wire);
         }
     }

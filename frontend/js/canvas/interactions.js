@@ -128,9 +128,31 @@ export class ClipboardManager {
                 x: comp.x,
                 y: comp.y,
                 label: comp.label || "",
+                rotation: comp.rotation || 0,
+                flipX: comp.flipX || false,
+                flipY: comp.flipY || false,
                 // Preserve definitions for custom user modules
                 definition: comp.type === "UserModule" ? comp.definition : null
             };
+
+            if (comp.type === "Clock") {
+                serialized.frequencyValue = comp.frequencyValue || 1;
+                serialized.frequencyUnit = comp.frequencyUnit || "Hz";
+                serialized.intervalMs = comp.intervalMs || 1000;
+            } else if (comp.type === "LED") {
+                serialized.ledColor = comp.ledColor || "Red";
+                serialized.rgbaValue = comp.rgbaValue || "";
+            } else if (comp.type === "Button") {
+                serialized.buttonMode = comp.buttonMode || "press";
+                serialized.holdDuration = comp.holdDuration || 1000;
+            } else if (comp.type === "UserModule" && comp.definition) {
+                serialized.definitionId = comp.definition.id;
+                serialized.pinPositions = comp.pins().map(p => ({
+                    id: p.id,
+                    side: p.side,
+                    offset: p.offset
+                }));
+            }
             this.copiedComponents.push(serialized);
         }
 
@@ -175,6 +197,31 @@ export class ClipboardManager {
                 newComp = createComponent(cData.type, newId, cData.x + 40, cData.y + 40);
             }
             newComp.label = cData.label;
+            newComp.rotation = cData.rotation || 0;
+            newComp.flipX = cData.flipX || false;
+            newComp.flipY = cData.flipY || false;
+
+            if (newComp.type === "Clock") {
+                if (cData.frequencyValue !== undefined) {
+                    newComp.frequencyValue = cData.frequencyValue;
+                    newComp.frequencyUnit = cData.frequencyUnit || "Hz";
+                }
+                if (cData.intervalMs !== undefined) {
+                    newComp.intervalMs = cData.intervalMs;
+                }
+                newComp.updateFrequency();
+            } else if (newComp.type === "LED") {
+                newComp.ledColor = cData.ledColor || "Red";
+                newComp.rgbaValue = cData.rgbaValue || "";
+            } else if (newComp.type === "Button") {
+                newComp.buttonMode = cData.buttonMode || "press";
+                newComp.holdDuration = cData.holdDuration || 1000;
+            } else if (newComp.type === "UserModule" && cData.pinPositions) {
+                cData.pinPositions.forEach(pos => {
+                    newComp.repositionPin(pos.id, pos.side, pos.offset);
+                });
+            }
+
             circuit.addComponent(newComp);
             pastedComps.push(newComp);
             pastedIdMap.set(idx, newComp);

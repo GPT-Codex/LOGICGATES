@@ -15,6 +15,7 @@ export class Pin {
         this.type = type;
         this.component = component;
         this.value = 0; // default state is LOW (0)
+        this.visualValue = 0; // visual animated state
 
         // Relative coordinates from component center (for canvas rendering)
         this.relX = 0;
@@ -37,6 +38,7 @@ export class Wire {
         this.fromPin = fromPin;
         this.toPin = toPin;
         this.color = color;
+        this.isManuallyRouted = false; // default is false (uses automatic Manhattan)
 
         // Custom control points or intermediate vertices for Manhattan routing
         this.points = [];
@@ -47,6 +49,13 @@ export class Wire {
      */
     get value() {
         return this.fromPin ? this.fromPin.value : 0;
+    }
+
+    /**
+     * Get the visual animated value of the wire (derived from fromPin's visualValue).
+     */
+    get visualValue() {
+        return this.fromPin ? (this.fromPin.visualValue !== undefined ? this.fromPin.visualValue : this.fromPin.value) : 0;
     }
 }
 
@@ -65,6 +74,8 @@ export class Component {
         this.width = 60;
         this.height = 40;
         this.rotation = 0; // 0, 90, 180, 270 degrees
+        this.flipX = false;
+        this.flipY = false;
 
         /** @type {Pin[]} */
         this.inputs = [];
@@ -100,15 +111,18 @@ export class Component {
     }
 
     /**
-     * Get absolute rotated position of a given pin.
+     * Get the absolute rotated position of a given pin, accounting for horizontal/vertical flips.
      */
     getPinAbsolutePosition(pin) {
+        const rx = this.flipX ? -pin.relX : pin.relX;
+        const ry = this.flipY ? -pin.relY : pin.relY;
+
         const rad = (this.rotation * Math.PI) / 180;
         const cos = Math.cos(rad);
         const sin = Math.sin(rad);
         return {
-            x: this.x + pin.relX * cos - pin.relY * sin,
-            y: this.y + pin.relX * sin + pin.relY * cos
+            x: this.x + rx * cos - ry * sin,
+            y: this.y + rx * sin + ry * cos
         };
     }
 
@@ -158,9 +172,12 @@ export class Component {
         ctx.fillStyle = "#2a2a2a";
         ctx.beginPath();
         // Draw relative to center (0, 0)
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
         ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 5);
         ctx.fill();
         ctx.stroke();
+        ctx.restore();
 
         // Draw text label
         ctx.fillStyle = "#ffffff";

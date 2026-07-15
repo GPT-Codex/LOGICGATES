@@ -657,3 +657,65 @@ kbd {
     background-color: #2d2d2d;
     margin: 5px 0;
 }
+
+/* Dynamic In-App Modal list and item styling */
+.modal-list-container {
+    max-height: 250px;
+    overflow-y: auto;
+    border: 1px solid #2d2d2d;
+    background-color: #111;
+    border-radius: 4px;
+    margin-top: 10px;
+    padding: 5px;
+}
+
+.modal-list-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px;
+    border-bottom: 1px solid #222;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.modal-list-item:hover {
+    background-color: #222;
+}
+
+.modal-list-item:last-child {
+    border-bottom: none;
+}
+
+.modal-item-info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 1;
+}
+
+.modal-item-name {
+    font-size: 13px;
+    font-weight: bold;
+    color: #eeeeee;
+}
+
+.modal-item-date {
+    font-size: 10.5px;
+    color: #777777;
+}
+
+.modal-item-delete-btn {
+    background: none;
+    border: none;
+    color: #e74c3c;
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 4px;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.modal-item-delete-btn:hover {
+    background-color: rgba(231, 76, 60, 0.15);
+    color: #ff5e57;
+}
