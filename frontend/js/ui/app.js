@@ -18,16 +18,6 @@ const engine = new SimulationEngine(circuit);
 const registry = new ModuleRegistry();
 
 let canvas, workspace, selectionManager, clipboardManager, historyManager;
-window._debug_vars = {
-    get canvas() { return canvas; },
-    get workspace() { return workspace; },
-    get selectionManager() { return selectionManager; },
-    get clipboardManager() { return clipboardManager; },
-    get historyManager() { return historyManager; },
-    get circuit() { return circuit; },
-    get engine() { return engine; },
-    get registry() { return registry; }
-};
 
 // Interaction states
 let placingComponentType = null; // Type of gate we are currently placing
@@ -228,14 +218,10 @@ function setupCanvasEvents() {
             const clickedComp = findComponentAt(world.x, world.y);
             if (clickedComp) {
                 // If it is a Button, handle click
-                if (clickedComp.type === "Button") {
+                if (clickedComp.type === "Button" && !e.shiftKey) {
                     clickedComp.isPressed = true;
                     clickedComp.triggerClick(engine);
-                    if (e.shiftKey) {
-                        selectionManager.toggleComponent(clickedComp);
-                    } else {
-                        selectionManager.selectSingleComponent(clickedComp);
-                    }
+                    selectionManager.selectSingleComponent(clickedComp);
                     saveHistoryState();
                     updatePropertiesPanel();
                     return;
@@ -553,9 +539,10 @@ function findComponentAt(wx, wy) {
 function findPinAt(wx, wy) {
     for (const comp of circuit.components.values()) {
         for (const pin of comp.pins()) {
-            const pos = comp.getPinAbsolutePosition(pin);
-            const dist = Math.hypot(wx - pos.x, wy - pos.y);
-            if (dist <= 8) {
+            const px = comp.x + pin.relX;
+            const py = comp.y + pin.relY;
+            const dist = Math.hypot(wx - px, wy - py);
+            if (dist <= 6) {
                 return { pin, component: comp };
             }
         }
@@ -1536,16 +1523,20 @@ function setupKeyboardShortcuts() {
         else if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") {
             e.preventDefault();
             let dx = 0, dy = 0;
-            if (e.key === "ArrowLeft") dx = -1;
-            else if (e.key === "ArrowRight") dx = 1;
-            else if (e.key === "ArrowUp") dy = -1;
-            else if (e.key === "ArrowDown") dy = 1;
+            const step = e.shiftKey ? (workspace ? workspace.gridSize : 20) : 1;
+            if (e.key === "ArrowLeft") dx = -step;
+            else if (e.key === "ArrowRight") dx = step;
+            else if (e.key === "ArrowUp") dy = -step;
+            else if (e.key === "ArrowDown") dy = step;
 
             for (const comp of selectionManager.selectedComponents) {
                 comp.x += dx;
                 comp.y += dy;
                 if (comp.type === "UserModule") {
                     comp.pins().forEach(p => comp.applyPinSideMath(p));
+                    if (comp.definition && comp.definition.moduleType === "Cable") {
+                        comp.translatePoints(dx, dy);
+                    }
                 }
             }
             saveHistoryState();
