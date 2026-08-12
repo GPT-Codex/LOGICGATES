@@ -75,8 +75,9 @@ function runTests() {
     // Pin IDs inside UserModule constructor are generated as `${id}_in_${name}` and `${id}_out_${name}`
     const w1 = new Wire("w1", mainInputA.outputs[0], halfAdderInstance.inputs[0]);
     const w2 = new Wire("w2", mainInputB.outputs[0], halfAdderInstance.inputs[1]);
-    const w3 = new Wire("w3", halfAdderInstance.outputs[0], mainOutSum.inputs[0]);
-    const w4 = new Wire("w4", halfAdderInstance.outputs[1], mainOutCarry.inputs[0]);
+    // Since outputs are alphabetically sorted as ["Carry", "Sum"], index 0 is Carry and index 1 is Sum.
+    const w3 = new Wire("w3", halfAdderInstance.outputs[1], mainOutSum.inputs[0]);
+    const w4 = new Wire("w4", halfAdderInstance.outputs[0], mainOutCarry.inputs[0]);
 
     mainCircuit.addWire(w1);
     mainCircuit.addWire(w2);

@@ -17,11 +17,12 @@ export class ModuleDefinition {
      * @param {any[]} wires - serialized inner wires
      * @param {string} moduleType - "Module", "Cable", "Connector"
      */
-    constructor(id, name, description, category, inputs, outputs, components, wires, moduleType = "Module") {
+    constructor(id, name, description, category, inputs, outputs, components, wires, moduleType = "Module", type = null) {
         this.id = id;
         this.name = name;
         this.description = description;
         this.category = category || "Custom";
+        this.type = type || this.category || "Custom";
         this.inputs = inputs;   // array of strings
         this.outputs = outputs; // array of strings
         this.components = components; // serialized data
@@ -50,9 +51,13 @@ export class UserModule extends Component {
         this.width = 100;
         this.height = Math.max(60, pinCount * 22 + 20);
 
+        // Sort inputs and outputs alphabetically by pin name
+        const sortedInputs = [...definition.inputs].sort((a, b) => a.localeCompare(b));
+        const sortedOutputs = [...definition.outputs].sort((a, b) => a.localeCompare(b));
+
         // Add external pins
         this.inputs = [];
-        definition.inputs.forEach((name, idx) => {
+        sortedInputs.forEach((name, idx) => {
             const pin = this.addInput(`${id}_in_${name}`, name);
             pin.side = "left";
             pin.offset = -this.height / 2 + 20 + idx * 22;
@@ -60,7 +65,7 @@ export class UserModule extends Component {
         });
 
         this.outputs = [];
-        definition.outputs.forEach((name, idx) => {
+        sortedOutputs.forEach((name, idx) => {
             const pin = this.addOutput(`${id}_out_${name}`, name);
             pin.side = "right";
             pin.offset = -this.height / 2 + 20 + idx * 22;

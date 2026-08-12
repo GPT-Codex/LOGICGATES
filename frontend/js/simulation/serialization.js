@@ -12,6 +12,30 @@ import { UserModule, ModuleDefinition } from "./modules.js";
  * @param {ModuleRegistry} registry
  * @returns {any}
  */
+export function findDefinitionByNameAndType(registry, name, type) {
+    if (!registry) return null;
+    const normName = name.toLowerCase().trim();
+    const normType = type.toLowerCase().trim();
+    for (const def of registry.definitions.values()) {
+        const defType = (def.type || def.category || "Custom").toLowerCase().trim();
+        if (def.name.toLowerCase().trim() === normName && defType === normType) {
+            return def;
+        }
+    }
+    return null;
+}
+
+export function getUniqueName(registry, name, type) {
+    if (!registry) return name;
+    let currentName = name;
+    let suffix = 1;
+    while (findDefinitionByNameAndType(registry, currentName, type)) {
+        currentName = `${name} (${suffix})`;
+        suffix++;
+    }
+    return currentName;
+}
+
 export function serializeCircuit(circuit, registry) {
     const components = [];
     for (const comp of circuit.components.values()) {
@@ -69,6 +93,7 @@ export function serializeCircuit(circuit, registry) {
                 name: def.name,
                 description: def.description,
                 category: def.category,
+                type: def.type || def.category || "Custom",
                 inputs: def.inputs,
                 outputs: def.outputs,
                 components: def.components,
@@ -97,6 +122,22 @@ export function deserializeCircuit(data, circuit, registry) {
     // 1. Re-register any custom definitions contained in the project save file
     if (data.definitions && registry) {
         for (const defData of data.definitions) {
+            const defType = defData.type || defData.category || "Custom";
+
+            // Check if definition already exists in registry
+            const existingById = registry.get(defData.id);
+            if (existingById) {
+                continue; // already registered, keep it
+            }
+
+            const existingByNameAndType = findDefinitionByNameAndType(registry, defData.name, defType);
+            if (existingByNameAndType) {
+                // Same name and type, but different ID.
+                // To avoid duplicate (name, type) violation, we can auto-rename the incoming definition!
+                const uniqueName = getUniqueName(registry, defData.name, defType);
+                defData.name = uniqueName;
+            }
+
             const def = new ModuleDefinition(
                 defData.id,
                 defData.name,
@@ -106,7 +147,8 @@ export function deserializeCircuit(data, circuit, registry) {
                 defData.outputs,
                 defData.components,
                 defData.wires,
-                defData.moduleType || "Module"
+                defData.moduleType || "Module",
+                defType
             );
             registry.register(def);
         }

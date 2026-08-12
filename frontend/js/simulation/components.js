@@ -986,6 +986,7 @@ export class ButtonGate extends Component {
         if (this.buttonMode === "press") {
             // Press (Toggle) Mode
             this.toggleState = !this.toggleState;
+            this.isPressed = true;
             this.evaluate();
             engine.propagatePin(this.outputs[0]);
             engine.propagate();
@@ -995,20 +996,6 @@ export class ButtonGate extends Component {
             this.evaluate();
             engine.propagatePin(this.outputs[0]);
             engine.propagate();
-
-            // Clear previous timeout if any
-            if (this.holdTimeout) {
-                clearTimeout(this.holdTimeout);
-            }
-
-            // After holdDuration expires, automatically return to previous state
-            this.holdTimeout = setTimeout(() => {
-                this.isPressed = false;
-                this.evaluate();
-                engine.propagatePin(this.outputs[0]);
-                engine.propagate();
-                this.holdTimeout = null;
-            }, this.holdDuration);
         }
     }
 
@@ -1068,6 +1055,198 @@ export class ButtonGate extends Component {
     }
 }
 
+export class NPNTransistorGate extends Component {
+    constructor(id, x, y) {
+        super(id, "NPN Transistor", x, y);
+        this.width = 50;
+        this.height = 40;
+
+        const inC = this.addInput(`${id}_inC`, "C"); // Collector
+        inC.relX = -25;
+        inC.relY = -10;
+
+        const inB = this.addInput(`${id}_inB`, "B"); // Base
+        inB.relX = -25;
+        inB.relY = 10;
+
+        const outE = this.addOutput(`${id}_outE`, "E"); // Emitter
+        outE.relX = 25;
+        outE.relY = 0;
+    }
+
+    evaluate() {
+        const baseVal = this.inputs[1].value;
+        const collVal = this.inputs[0].value;
+        this.outputs[0].value = (baseVal === 1) ? collVal : 0;
+    }
+
+    draw(ctx, isSelected) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
+
+        if (isSelected) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#00adb5";
+            ctx.strokeStyle = "#00adb5";
+            ctx.lineWidth = 2.5;
+        } else {
+            ctx.strokeStyle = "#4e4e4e";
+            ctx.lineWidth = 1.5;
+        }
+
+        ctx.fillStyle = "#1e1e1e";
+        ctx.beginPath();
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 6);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        // Draw schematic representation of NPN transistor inside
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        // Base plate
+        ctx.moveTo(-10, -10);
+        ctx.lineTo(-10, 10);
+        ctx.stroke();
+
+        // Base connection line
+        ctx.beginPath();
+        ctx.moveTo(-15, 0);
+        ctx.lineTo(-10, 0);
+        ctx.stroke();
+
+        // Collector line
+        ctx.beginPath();
+        ctx.moveTo(-10, -5);
+        ctx.lineTo(8, -12);
+        ctx.stroke();
+
+        // Emitter line with arrow
+        ctx.beginPath();
+        ctx.moveTo(-10, 5);
+        ctx.lineTo(8, 12);
+        ctx.stroke();
+
+        // NPN Arrow on emitter pointing away from base
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.moveTo(3, 10);
+        ctx.lineTo(8, 12);
+        ctx.lineTo(4, 7);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 9px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("NPN", 0, -12);
+        ctx.restore();
+
+        this.drawPins(ctx);
+    }
+}
+
+export class PNPTransistorGate extends Component {
+    constructor(id, x, y) {
+        super(id, "PNP Transistor", x, y);
+        this.width = 50;
+        this.height = 40;
+
+        const inC = this.addInput(`${id}_inC`, "C"); // Collector
+        inC.relX = -25;
+        inC.relY = -10;
+
+        const inB = this.addInput(`${id}_inB`, "B"); // Base
+        inB.relX = -25;
+        inB.relY = 10;
+
+        const outE = this.addOutput(`${id}_outE`, "E"); // Emitter
+        outE.relX = 25;
+        outE.relY = 0;
+    }
+
+    evaluate() {
+        const baseVal = this.inputs[1].value;
+        const collVal = this.inputs[0].value;
+        this.outputs[0].value = (baseVal === 0) ? collVal : 0;
+    }
+
+    draw(ctx, isSelected) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
+
+        if (isSelected) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#00adb5";
+            ctx.strokeStyle = "#00adb5";
+            ctx.lineWidth = 2.5;
+        } else {
+            ctx.strokeStyle = "#4e4e4e";
+            ctx.lineWidth = 1.5;
+        }
+
+        ctx.fillStyle = "#1e1e1e";
+        ctx.beginPath();
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 6);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        // Draw schematic representation of PNP transistor inside
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        // Base plate
+        ctx.moveTo(-10, -10);
+        ctx.lineTo(-10, 10);
+        ctx.stroke();
+
+        // Base connection line
+        ctx.beginPath();
+        ctx.moveTo(-15, 0);
+        ctx.lineTo(-10, 0);
+        ctx.stroke();
+
+        // Collector line
+        ctx.beginPath();
+        ctx.moveTo(-10, -5);
+        ctx.lineTo(8, -12);
+        ctx.stroke();
+
+        // Emitter line with arrow
+        ctx.beginPath();
+        ctx.moveTo(-10, 5);
+        ctx.lineTo(8, 12);
+        ctx.stroke();
+
+        // PNP Arrow on emitter pointing towards base
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.moveTo(-4, 7);
+        ctx.lineTo(-9, 5);
+        ctx.lineTo(-5, 11);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 9px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("PNP", 0, -12);
+        ctx.restore();
+
+        this.drawPins(ctx);
+    }
+}
+
 /**
  * Mapping of component types to their constructor classes.
  */
@@ -1088,7 +1267,9 @@ export const COMPONENT_REGISTRY = {
     "LED": LEDGate,
     "7-Segment Display": SevenSegmentGate,
     "10-Segment Display": TenSegmentGate,
-    "Button": ButtonGate
+    "Button": ButtonGate,
+    "NPN Transistor": NPNTransistorGate,
+    "PNP Transistor": PNPTransistorGate
 };
 
 /**
