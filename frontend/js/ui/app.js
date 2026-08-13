@@ -7,6 +7,7 @@ import { createComponent, COMPONENT_REGISTRY } from "../simulation/components.js
 import { SimulationEngine } from "../simulation/simulation_engine.js";
 import { ModuleRegistry, ModuleDefinition, UserModule } from "../simulation/modules.js";
 import { serializeCircuit, deserializeCircuit, findDefinitionByNameAndType, getUniqueName } from "../simulation/serialization.js";
+import { CommandEngine } from "../simulation/command_engine.js";
 import { Workspace } from "../canvas/workspace.js";
 import { isPointNearWire, drawWire, computeManhattanRoute, isPointNearSegment } from "../canvas/wires.js";
 import { SelectionManager, ClipboardManager, HistoryManager } from "../canvas/interactions.js";
@@ -63,6 +64,10 @@ window.addEventListener("DOMContentLoaded", () => {
     setupCanvasEvents();
     setupUIEvents();
     setupKeyboardShortcuts();
+
+    // Initialize CommandEngine & Setup Power-User Terminal
+    const commandEngine = new CommandEngine(circuit, registry, historyManager, engine);
+    setupTerminal(commandEngine);
 
     // Rebuild initial state
     engine.evaluateAll();
@@ -618,6 +623,133 @@ function updateMarqueeSelection() {
             selectionManager.selectedComponents.add(comp);
         }
     }
+}
+
+function setupTerminal(commandEngine) {
+    const panel = document.getElementById("terminal-panel");
+    const header = document.getElementById("terminal-header");
+    const toggleBtn = document.getElementById("btn-toggle-terminal");
+    const toggleIcon = document.getElementById("terminal-toggle-icon");
+    const outputArea = document.getElementById("terminal-output");
+    const inputField = document.getElementById("terminal-input");
+
+    if (!panel || !header || !toggleBtn || !toggleIcon || !outputArea || !inputField) {
+        return;
+    }
+
+    // Toggle collapse
+    const toggleTerminal = () => {
+        panel.classList.toggle("collapsed");
+        const isCollapsed = panel.classList.contains("collapsed");
+        toggleIcon.className = isCollapsed ? "fa-solid fa-chevron-up" : "fa-solid fa-chevron-down";
+        if (!isCollapsed) {
+            inputField.focus();
+        }
+    };
+
+    header.addEventListener("click", toggleTerminal);
+    toggleBtn.addEventListener("click", (e) => {
+        e.stopPropagation(); // prevent header click triggering toggle again
+        toggleTerminal();
+    });
+
+    // History list
+    const history = [];
+    let historyIdx = -1;
+
+    // Helper to log line
+    const logLine = (text, className = "") => {
+        const line = document.createElement("div");
+        line.className = `terminal-line ${className}`;
+        line.textContent = text;
+        outputArea.appendChild(line);
+        outputArea.scrollTop = outputArea.scrollHeight;
+    };
+
+    // Command suggestions for Tab completion
+    const suggestionList = [
+        "add", "move", "connect", "set", "remove", "list", "show", "undo", "redo",
+        "clock", "and", "or", "not", "xor", "nand", "nor", "xnor", "buffer", "button", "input", "output", "led", "npn", "pnp"
+    ];
+
+    inputField.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            const val = inputField.value.trim();
+            if (!val) return;
+
+            // Log command
+            logLine(`> ${val}`, "command-line");
+
+            // Execute command
+            const res = commandEngine.execute(val);
+
+            if (res.success) {
+                logLine(res.message || "Command executed successfully", "success-line");
+                // Immediately refresh workspace rendering and properties
+                commandEngine.engine.evaluateAll();
+                selectionManager.clear();
+                updatePropertiesPanel();
+                updateStatusBar();
+            } else {
+                logLine(res.error || "Execution failed", "error-line");
+            }
+
+            // Save history
+            history.push(val);
+            historyIdx = history.length;
+            inputField.value = "";
+        }
+        else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            if (history.length === 0) return;
+            if (historyIdx > 0) {
+                historyIdx--;
+                inputField.value = history[historyIdx];
+            }
+        }
+        else if (e.key === "ArrowDown") {
+            e.preventDefault();
+            if (history.length === 0) return;
+            if (historyIdx < history.length - 1) {
+                historyIdx++;
+                inputField.value = history[historyIdx];
+            } else {
+                historyIdx = history.length;
+                inputField.value = "";
+            }
+        }
+        else if (e.key === "Tab") {
+            e.preventDefault();
+            const val = inputField.value;
+            const parts = val.trim().split(/\s+/);
+            if (parts.length === 0 || val === "") return;
+
+            const lastWord = parts[parts.length - 1].toLowerCase();
+
+            // Check suggestions
+            let matches = suggestionList.filter(s => s.startsWith(lastWord));
+
+            // Also suggest existing component names from circuit graph!
+            const compNames = Array.from(commandEngine.circuit.components.keys());
+            const compMatches = compNames.filter(name => name.toLowerCase().startsWith(lastWord));
+            matches = matches.concat(compMatches);
+
+            if (matches.length === 1) {
+                // Perform completion
+                parts[parts.length - 1] = matches[0];
+                inputField.value = parts.join(" ") + " ";
+            } else if (matches.length > 1) {
+                // Show multiple matches
+                logLine(`Suggestions: ${matches.join(", ")}`, "system-line");
+            }
+        }
+        else if (e.key === "Escape") {
+            e.preventDefault();
+            if (!panel.classList.contains("collapsed")) {
+                toggleTerminal();
+            }
+        }
+    });
 }
 
 /**

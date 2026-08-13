@@ -91,6 +91,27 @@
         <main class="workspace-area">
             <canvas id="simulator-canvas"></canvas>
 
+            <!-- POWER-USER TERMINAL PANEL -->
+            <div class="terminal-panel collapsed" id="terminal-panel">
+                <div class="terminal-header" id="terminal-header">
+                    <span class="terminal-title"><i class="fa-solid fa-terminal"></i> Power-User Terminal</span>
+                    <div class="terminal-controls">
+                        <button class="terminal-toggle-btn" id="btn-toggle-terminal" title="Toggle Terminal (Esc)">
+                            <i class="fa-solid fa-chevron-up" id="terminal-toggle-icon"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="terminal-body" id="terminal-body">
+                    <div class="terminal-output" id="terminal-output">
+                        <div class="terminal-line system-line">Welcome to Digital Logic Simulator Power-User Terminal. Type 'list' or 'help'. Press 'Esc' to collapse.</div>
+                    </div>
+                    <div class="terminal-input-row">
+                        <span class="terminal-prompt">&gt;</span>
+                        <input type="text" id="terminal-input" placeholder="add clock CLK..." autocomplete="off" spellcheck="false">
+                    </div>
+                </div>
+            </div>
+
             <!-- Shortcuts HUD Guide -->
             <div class="shortcuts-hud" id="shortcuts-hud">
                 <div class="hud-header">

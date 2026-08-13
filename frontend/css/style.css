@@ -719,3 +719,131 @@ kbd {
     background-color: rgba(231, 76, 60, 0.15);
     color: #ff5e57;
 }
+
+/* POWER-USER TERMINAL PANEL */
+.terminal-panel {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 220px;
+    background-color: #1a1a1a;
+    border-top: 2px solid #2d2d2d;
+    display: flex;
+    flex-direction: column;
+    z-index: 5;
+    transition: height 0.2s ease-in-out, transform 0.2s ease-in-out;
+}
+
+.terminal-panel.collapsed {
+    height: 35px; /* only show header when collapsed */
+}
+
+.terminal-header {
+    background-color: #242424;
+    height: 35px;
+    padding: 0 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    border-bottom: 1px solid #141414;
+}
+
+.terminal-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #00adb5;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.terminal-toggle-btn {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    transition: color 0.2s, background-color 0.2s;
+}
+
+.terminal-toggle-btn:hover {
+    color: #fff;
+    background-color: #333;
+}
+
+.terminal-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 10px 15px;
+    font-family: "Courier New", Courier, monospace;
+}
+
+.terminal-output {
+    flex: 1;
+    overflow-y: auto;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #ddd;
+    margin-bottom: 10px;
+    user-select: text;
+}
+
+.terminal-line {
+    margin-bottom: 4px;
+    white-space: pre-wrap;
+}
+
+.terminal-line.command-line {
+    color: #00adb5;
+    font-weight: bold;
+}
+
+.terminal-line.success-line {
+    color: #2ecc71;
+}
+
+.terminal-line.error-line {
+    color: #e74c3c;
+    font-weight: bold;
+}
+
+.terminal-line.system-line {
+    color: #9b59b6;
+}
+
+.terminal-input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background-color: #111;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+
+.terminal-prompt {
+    color: #00adb5;
+    font-weight: bold;
+    font-size: 13px;
+    font-family: "Courier New", Courier, monospace;
+}
+
+#terminal-input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: #fff;
+    font-size: 13px;
+    font-family: "Courier New", Courier, monospace;
+}
