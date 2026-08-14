@@ -3,17 +3,17 @@
  */
 export class Workspace {
     /**
-     * @param {HTMLCanvasElement} canvas
+     * @param {HTMLCanvasElement} canvas 
      */
     constructor(canvas) {
         this.canvas = canvas;
         this.ctx = canvas.getContext("2d");
-
+        
         // Viewport transform parameters
         this.scale = 1.0;
         this.offsetX = 0;
         this.offsetY = 0;
-
+        
         this.gridSize = 20; // snap spacing
         this.minScale = 0.15;
         this.maxScale = 4.0;
@@ -52,9 +52,9 @@ export class Workspace {
 
     /**
      * Zoom centered around a specific screen coordinate (usually the mouse pointer).
-     * @param {number} screenX
-     * @param {number} screenY
-     * @param {number} zoomFactor
+     * @param {number} screenX 
+     * @param {number} screenY 
+     * @param {number} zoomFactor 
      */
     zoomAt(screenX, screenY, zoomFactor) {
         const rect = this.canvas.getBoundingClientRect();
@@ -91,7 +91,7 @@ export class Workspace {
         ctx.fillRect(0, 0, viewportWidth, viewportHeight);
 
         const scaledGrid = this.gridSize * this.scale;
-
+        
         // Adjust grid division opacity depending on zoom level so it doesn't get cluttered
         let opacity = 0.12;
         if (this.scale < 0.4) opacity = 0.04;
@@ -104,7 +104,7 @@ export class Workspace {
         const startY = this.offsetY % scaledGrid;
 
         ctx.beginPath();
-
+        
         // Vertical lines
         for (let x = startX; x < viewportWidth; x += scaledGrid) {
             ctx.moveTo(x, 0);
@@ -123,13 +123,13 @@ export class Workspace {
         ctx.strokeStyle = "rgba(100, 150, 255, 0.2)";
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-
+        
         // Y axis
         if (this.offsetX >= 0 && this.offsetX <= viewportWidth) {
             ctx.moveTo(this.offsetX, 0);
             ctx.lineTo(this.offsetX, viewportHeight);
         }
-
+        
         // X axis
         if (this.offsetY >= 0 && this.offsetY <= viewportHeight) {
             ctx.moveTo(0, this.offsetY);

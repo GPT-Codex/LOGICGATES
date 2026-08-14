@@ -16,7 +16,7 @@ export class SelectionManager {
         this.selectedComponents = new Set();
         /** @type {Set<any>} */
         this.selectedWires = new Set();
-
+        
         // Dragging states
         this.isDragging = false;
         this.dragStartX = 0;
@@ -121,7 +121,7 @@ export class ClipboardManager {
         const compIds = new Set();
         for (const comp of selectedComponents) {
             compIds.add(comp.id);
-
+            
             // Reusable serialization format
             const serialized = {
                 type: comp.type,
@@ -162,7 +162,7 @@ export class ClipboardManager {
                 // Find pin indexes so we can map them back correctly on paste!
                 const fromCompIndex = Array.from(selectedComponents).indexOf(wire.fromPin.component);
                 const toCompIndex = Array.from(selectedComponents).indexOf(wire.toPin.component);
-
+                
                 const fromPinIndex = wire.fromPin.component.outputs.indexOf(wire.fromPin);
                 const toPinIndex = wire.toPin.component.inputs.indexOf(wire.toPin);
 
@@ -189,7 +189,7 @@ export class ClipboardManager {
         // Paste components offset by grid distance
         this.copiedComponents.forEach((cData, idx) => {
             const newId = `${cData.type.toLowerCase().replace(/\s+/g, "_")}_${Math.random().toString(36).substring(2, 9)}`;
-
+            
             let newComp;
             if (cData.type === "UserModule") {
                 newComp = new UserModule(newId, cData.definition, cData.x + 40, cData.y + 40);
@@ -225,7 +225,7 @@ export class ClipboardManager {
             circuit.addComponent(newComp);
             pastedComps.push(newComp);
             pastedIdMap.set(idx, newComp);
-
+            
             // Keep copy buffer offset so consecutive pastes drift down-right beautifully!
             cData.x += 40;
             cData.y += 40;
@@ -269,7 +269,7 @@ export class HistoryManager {
     pushState(state) {
         // Clear redo stack on new user actions
         this.redoStack = [];
-
+        
         // Push state, checking length
         if (this.undoStack.length >= this.maxHistory) {
             this.undoStack.shift();
@@ -282,7 +282,7 @@ export class HistoryManager {
      */
     undo(currentState) {
         if (this.undoStack.length === 0) return null;
-
+        
         this.redoStack.push(currentState);
         return this.undoStack.pop();
     }

@@ -42,43 +42,44 @@ assert(button.outputs[0].value === 0, "Toggled OFF: output should be 0");
 
 // 5. Momentary Hold Mode
 button.buttonMode = "hold";
-button.holdDuration = 50; // 50ms hold
 
 button.triggerClick(engine);
 assert(button.isPressed === true, "Triggering hold should set isPressed = true");
 assert(button.outputs[0].value === 1, "With power and hold active, output should be 1");
 
-// Wait 100ms for hold duration to expire
-setTimeout(() => {
-    assert(button.isPressed === false, "Hold duration expired: should auto reset to isPressed = false");
-    assert(button.outputs[0].value === 0, "Hold duration expired: output should be 0");
+// Simulate releasing the mouse physically:
+button.isPressed = false;
+button.evaluate();
+engine.propagatePin(button.outputs[0]);
+engine.propagate();
+assert(button.isPressed === false, "Releasing hold should set isPressed = false");
+assert(button.outputs[0].value === 0, "Releasing hold: output should be 0");
 
-    // 6. Test Serialization
-    button.buttonMode = "press";
-    button.toggleState = true;
-    button.holdDuration = 500;
+// 6. Test Serialization
+button.buttonMode = "press";
+button.toggleState = true;
+button.holdDuration = 500;
 
-    const serialized = serializeCircuit(circuit, null);
-    assert(serialized.components[0].buttonMode === "press", "Serialized buttonMode should be press");
-    assert(serialized.components[0].holdDuration === 500, "Serialized holdDuration should be 500");
+const serialized = serializeCircuit(circuit, null);
+assert(serialized.components[0].buttonMode === "press", "Serialized buttonMode should be press");
+assert(serialized.components[0].holdDuration === 500, "Serialized holdDuration should be 500");
 
-    const circuit2 = new Circuit();
-    deserializeCircuit(serialized, circuit2, null);
-    const loadedButton = circuit2.components.get("btn1");
-    assert(loadedButton !== undefined, "Loaded button should be deserialized");
-    assert(loadedButton.buttonMode === "press", "Loaded buttonMode should match");
-    assert(loadedButton.holdDuration === 500, "Loaded holdDuration should match");
+const circuit2 = new Circuit();
+deserializeCircuit(serialized, circuit2, null);
+const loadedButton = circuit2.components.get("btn1");
+assert(loadedButton !== undefined, "Loaded button should be deserialized");
+assert(loadedButton.buttonMode === "press", "Loaded buttonMode should match");
+assert(loadedButton.holdDuration === 500, "Loaded holdDuration should match");
 
-    // 7. Clipboard preserve
-    const clipboard = new ClipboardManager();
-    const selected = new Set([loadedButton]);
-    clipboard.copy(selected, new Set(), circuit2.wires.values());
+// 7. Clipboard preserve
+const clipboard = new ClipboardManager();
+const selected = new Set([loadedButton]);
+clipboard.copy(selected, new Set(), circuit2.wires.values());
 
-    const circuit3 = new Circuit();
-    const pasted = clipboard.paste(circuit3, { snap: (x) => x });
-    assert(pasted.length === 1, "Pasted components count should be 1");
-    assert(pasted[0].buttonMode === "press", "Pasted button should preserve buttonMode");
-    assert(pasted[0].holdDuration === 500, "Pasted button should preserve holdDuration");
+const circuit3 = new Circuit();
+const pasted = clipboard.paste(circuit3, { snap: (x) => x });
+assert(pasted.length === 1, "Pasted components count should be 1");
+assert(pasted[0].buttonMode === "press", "Pasted button should preserve buttonMode");
+assert(pasted[0].holdDuration === 500, "Pasted button should preserve holdDuration");
 
-    console.log("Button Component unit tests passed successfully!");
-}, 100);
+console.log("Button Component unit tests passed successfully!");

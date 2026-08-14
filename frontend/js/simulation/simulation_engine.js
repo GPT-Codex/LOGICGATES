@@ -4,17 +4,17 @@
 
 export class SimulationEngine {
     /**
-     * @param {Circuit} circuit
+     * @param {Circuit} circuit 
      */
     constructor(circuit) {
         this.circuit = circuit;
         this.oscillationLimit = 1000;
         this.isRunning = true;
-
+        
         // Cache to quickly find wires originating from a given pin ID
         /** @type {Map<string, Wire[]>} */
         this.pinToWiresMap = new Map();
-
+        
         // Event Queue: contains components that need to be evaluated
         /** @type {Set<Component>} */
         this.evaluationQueue = new Set();
@@ -30,7 +30,7 @@ export class SimulationEngine {
         this.pinToWiresMap.clear();
         for (const wire of this.circuit.wires.values()) {
             if (!wire.fromPin || !wire.toPin) continue;
-
+            
             // Map from output pin to wire
             const fromId = wire.fromPin.id;
             if (!this.pinToWiresMap.has(fromId)) {
@@ -42,7 +42,7 @@ export class SimulationEngine {
 
     /**
      * Queue a component for evaluation.
-     * @param {Component} component
+     * @param {Component} component 
      */
     enqueueComponent(component) {
         if (!this.isRunning) return;
@@ -89,9 +89,9 @@ export class SimulationEngine {
      */
     propagate() {
         if (!this.isRunning) return;
-
+        
         let steps = 0;
-
+        
         while (this.evaluationQueue.size > 0) {
             steps++;
             if (steps > this.oscillationLimit) {
@@ -111,10 +111,10 @@ export class SimulationEngine {
             for (const comp of batch) {
                 // Remember previous output values to detect changes
                 const prevOutputs = comp.outputs.map(p => p.value);
-
+                
                 // Run component's custom logic
                 comp.evaluate();
-
+                
                 // Check if any outputs actually changed
                 for (let i = 0; i < comp.outputs.length; i++) {
                     if (comp.outputs[i].value !== prevOutputs[i]) {

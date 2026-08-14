@@ -4,7 +4,7 @@
 
 export class Pin {
     /**
-     * @param {string} id
+     * @param {string} id 
      * @param {string} name - label (e.g. "A", "B", "Q")
      * @param {string} type - "input" or "output"
      * @param {Component} component - parent component reference
@@ -16,11 +16,11 @@ export class Pin {
         this.component = component;
         this.value = 0; // default state is LOW (0)
         this.visualValue = 0; // visual animated state
-
+        
         // Relative coordinates from component center (for canvas rendering)
         this.relX = 0;
         this.relY = 0;
-
+        
         // Side assigned for custom chips ("left", "right", "top", "bottom")
         this.side = type === "input" ? "left" : "right";
     }
@@ -28,7 +28,7 @@ export class Pin {
 
 export class Wire {
     /**
-     * @param {string} id
+     * @param {string} id 
      * @param {Pin} fromPin - Source Pin (output type)
      * @param {Pin} toPin - Target Pin (input type)
      * @param {string|null} color - Custom color for this wire (default is null)
@@ -39,9 +39,9 @@ export class Wire {
         this.toPin = toPin;
         this.color = color;
         this.isManuallyRouted = false; // default is false (uses automatic Manhattan)
-
+        
         // Custom control points or intermediate vertices for Manhattan routing
-        this.points = [];
+        this.points = []; 
     }
 
     /**
@@ -61,10 +61,10 @@ export class Wire {
 
 export class Component {
     /**
-     * @param {string} id
-     * @param {string} type
-     * @param {number} x
-     * @param {number} y
+     * @param {string} id 
+     * @param {string} type 
+     * @param {number} x 
+     * @param {number} y 
      */
     constructor(id, type, x = 0, y = 0) {
         this.id = id;
@@ -76,12 +76,12 @@ export class Component {
         this.rotation = 0; // 0, 90, 180, 270 degrees
         this.flipX = false;
         this.flipY = false;
-
+        
         /** @type {Pin[]} */
         this.inputs = [];
         /** @type {Pin[]} */
         this.outputs = [];
-
+        
         this.label = ""; // Optional user-assigned label
     }
 
@@ -153,7 +153,7 @@ export class Component {
      */
     draw(ctx, isSelected) {
         ctx.save();
-
+        
         // Translate to component center and rotate!
         ctx.translate(this.x, this.y);
         ctx.rotate((this.rotation * Math.PI) / 180);
@@ -199,7 +199,7 @@ export class Component {
         const allPins = this.pins();
         for (const pin of allPins) {
             const pos = this.getPinAbsolutePosition(pin);
-
+            
             ctx.beginPath();
             ctx.arc(pos.x, pos.y, 4, 0, 2 * Math.PI);
             ctx.fillStyle = pin.value === 1 ? "#39ff14" : "#4e4e4e"; // Glowing green for HIGH state

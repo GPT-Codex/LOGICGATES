@@ -4,10 +4,10 @@
 
 /**
  * Computes orthogonal path between two points.
- * @param {number} x1
- * @param {number} y1
- * @param {number} x2
- * @param {number} y2
+ * @param {number} x1 
+ * @param {number} y1 
+ * @param {number} x2 
+ * @param {number} y2 
  * @returns {Array<{x: number, y: number}>}
  */
 export function computeManhattanRoute(x1, y1, x2, y2) {
@@ -71,10 +71,10 @@ export function isPointNearSegment(wx, wy, p1, p2, threshold) {
 
 /**
  * Checks if a point (wx, wy) in world coordinates is near any segment of a wire.
- * @param {Wire} wire
- * @param {number} wx
- * @param {number} wy
- * @param {number} threshold
+ * @param {Wire} wire 
+ * @param {number} wx 
+ * @param {number} wy 
+ * @param {number} threshold 
  * @returns {boolean}
  */
 export function isPointNearWire(wire, wx, wy, threshold = 6) {
@@ -91,9 +91,9 @@ export function isPointNearWire(wire, wx, wy, threshold = 6) {
 
 /**
  * Draws a Wire with state coloring, glowing halos, and selection styling.
- * @param {CanvasRenderingContext2D} ctx
- * @param {Wire} wire
- * @param {boolean} isSelected
+ * @param {CanvasRenderingContext2D} ctx 
+ * @param {Wire} wire 
+ * @param {boolean} isSelected 
  */
 export function drawWire(ctx, wire, isSelected) {
     if (!wire.fromPin || !wire.toPin) return;
@@ -119,13 +119,13 @@ export function drawWire(ctx, wire, isSelected) {
     ctx.save();
 
     const isHigh = wire.visualValue === 1;
-
+    
     // Choose wire colors
     let baseColor = "#5c6b73"; // Default LOW state color
     if (isHigh) {
         baseColor = "#39ff14"; // Bright glowing green for HIGH state
     }
-
+    
     // Override if custom color is configured
     if (wire.color) {
         baseColor = wire.color;
