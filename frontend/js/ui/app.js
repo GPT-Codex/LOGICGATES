@@ -59,14 +59,14 @@ window.addEventListener("DOMContentLoaded", () => {
     clipboardManager = new ClipboardManager();
     historyManager = new HistoryManager();
 
+    // Initialize CommandEngine & Setup Power-User Terminal
+    const commandEngine = new CommandEngine(circuit, registry, historyManager, engine);
+
     // Listeners
     window.addEventListener("resize", resizeCanvasToWindow);
     setupCanvasEvents();
-    setupUIEvents();
+    setupUIEvents(commandEngine);
     setupKeyboardShortcuts();
-
-    // Initialize CommandEngine & Setup Power-User Terminal
-    const commandEngine = new CommandEngine(circuit, registry, historyManager, engine);
     setupTerminal(commandEngine);
 
     // Rebuild initial state
@@ -959,9 +959,167 @@ function loadProjectPayload(name) {
 }
 
 /**
+ * Run Script Dialog Workflow
+ */
+function triggerRunScriptDialog(commandEngine) {
+    const html = `
+        <div style="margin-bottom: 12px;">
+            <p style="font-size: 13px; color: #ccc; margin-bottom: 8px;">Enter or paste a <code>.sim</code> circuit script:</p>
+            <textarea id="sim-script-input" rows="10" style="width: 100%; box-sizing: border-box; background-color: #1a1a1a; border: 1px solid #3d3d3d; border-radius: 4px; color: #39ff14; font-family: monospace; font-size: 13px; padding: 10px; resize: vertical; outline: none;" placeholder="# Full adder&#10;add input A&#10;add input B&#10;add output S&#10;connect A.out G1.A"></textarea>
+            <div id="sim-script-error" style="display: none; margin-top: 8px; padding: 8px 12px; background-color: rgba(231, 76, 60, 0.2); border: 1px solid #e74c3c; border-radius: 4px; color: #ff6b6b; font-size: 12px; font-family: monospace;"></div>
+        </div>
+        <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+            <button class="btn btn-secondary" id="btn-load-sim-file"><i class="fa-solid fa-file-arrow-up"></i> Load File...</button>
+            <div>
+                <button class="btn btn-secondary" id="btn-run-script-cancel">Cancel</button>
+                <button class="btn btn-primary" id="btn-run-script-exec"><i class="fa-solid fa-play"></i> Execute</button>
+            </div>
+        </div>
+    `;
+
+    openModal('<i class="fa-solid fa-code"></i> Run .sim Script', html, () => {
+        const textarea = document.getElementById("sim-script-input");
+        const errorDiv = document.getElementById("sim-script-error");
+        textarea.focus();
+
+        document.getElementById("btn-run-script-cancel").addEventListener("click", closeModal);
+
+        document.getElementById("btn-load-sim-file").addEventListener("click", () => {
+            const fileInput = document.createElement("input");
+            fileInput.type = "file";
+            fileInput.accept = ".sim,.txt";
+            fileInput.style.display = "none";
+            document.body.appendChild(fileInput);
+
+            fileInput.addEventListener("change", (e) => {
+                const file = e.target.files[0];
+                if (!file) {
+                    fileInput.remove();
+                    return;
+                }
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    textarea.value = ev.target.result;
+                    fileInput.remove();
+                };
+                reader.readAsText(file);
+            });
+            fileInput.click();
+        });
+
+        document.getElementById("btn-run-script-exec").addEventListener("click", () => {
+            const code = textarea.value;
+            errorDiv.style.display = "none";
+            errorDiv.textContent = "";
+
+            const res = commandEngine.executeScript(code);
+            if (res.success) {
+                commandEngine.engine.evaluateAll();
+                selectionManager.clear();
+                saveHistoryState();
+                updatePropertiesPanel();
+                updateStatusBar();
+                closeModal();
+                alert(`Script executed successfully (${res.linesExecuted} commands).`);
+            } else {
+                errorDiv.style.display = "block";
+                errorDiv.textContent = res.error;
+            }
+        });
+    });
+}
+
+/**
+ * Import .sim File Workflow
+ */
+function triggerImportSimDialog(commandEngine) {
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = ".sim,.txt";
+    fileInput.style.display = "none";
+    document.body.appendChild(fileInput);
+
+    fileInput.addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        if (!file) {
+            fileInput.remove();
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const content = ev.target.result;
+            const res = commandEngine.executeScript(content);
+
+            if (res.success) {
+                commandEngine.engine.evaluateAll();
+                selectionManager.clear();
+                saveHistoryState();
+                updatePropertiesPanel();
+                updateStatusBar();
+                alert(`Successfully imported script from '${file.name}' (${res.linesExecuted} commands executed).`);
+            } else {
+                alert(`Import Failed:\n${res.error}`);
+            }
+            fileInput.remove();
+        };
+        reader.readAsText(file);
+    });
+
+    fileInput.click();
+}
+
+/**
+ * Export .sim Circuit Workflow
+ */
+function triggerExportSimDialog(commandEngine) {
+    const scriptText = commandEngine.exportScript();
+
+    // 1. Trigger file download
+    const blob = new Blob([scriptText], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const downloadAnchor = document.createElement("a");
+    downloadAnchor.href = url;
+    downloadAnchor.download = "circuit.sim";
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    URL.revokeObjectURL(url);
+
+    // 2. Open preview modal
+    const html = `
+        <div style="margin-bottom: 12px;">
+            <p style="font-size: 13px; color: #ccc; margin-bottom: 8px;">Exported <code>.sim</code> circuit script:</p>
+            <textarea id="sim-export-output" rows="10" readonly style="width: 100%; box-sizing: border-box; background-color: #1a1a1a; border: 1px solid #3d3d3d; border-radius: 4px; color: #39ff14; font-family: monospace; font-size: 13px; padding: 10px; resize: vertical; outline: none;">${scriptText}</textarea>
+        </div>
+        <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+            <button class="btn btn-secondary" id="btn-copy-sim"><i class="fa-solid fa-copy"></i> Copy to Clipboard</button>
+            <button class="btn btn-primary" id="btn-close-sim-export">Close</button>
+        </div>
+    `;
+
+    openModal('<i class="fa-solid fa-file-export"></i> Export .sim Circuit', html, () => {
+        document.getElementById("btn-close-sim-export").addEventListener("click", closeModal);
+        document.getElementById("btn-copy-sim").addEventListener("click", () => {
+            const textarea = document.getElementById("sim-export-output");
+            textarea.select();
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(textarea.value).then(() => {
+                    alert("Script copied to clipboard!");
+                }).catch(() => {
+                    alert("Script copied to clipboard!");
+                });
+            } else {
+                alert("Script copied to clipboard!");
+            }
+        });
+    });
+}
+
+/**
  * Hook up all buttons, modals, category toggles, and side inputs.
  */
-function setupUIEvents() {
+function setupUIEvents(commandEngine) {
     // Categories collapse/toggle
     document.querySelectorAll(".category-header").forEach(header => {
         header.addEventListener("click", () => {
@@ -1033,6 +1191,18 @@ function setupUIEvents() {
 
     document.getElementById("btn-load-project").addEventListener("click", () => {
         triggerLoadProjectDialog();
+    });
+
+    document.getElementById("btn-run-script").addEventListener("click", () => {
+        triggerRunScriptDialog(commandEngine);
+    });
+
+    document.getElementById("btn-import-sim").addEventListener("click", () => {
+        triggerImportSimDialog(commandEngine);
+    });
+
+    document.getElementById("btn-export-sim").addEventListener("click", () => {
+        triggerExportSimDialog(commandEngine);
     });
 
     document.getElementById("btn-export-library").addEventListener("click", () => {
