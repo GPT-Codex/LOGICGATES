@@ -6,7 +6,8 @@ import { Circuit, Wire } from "../simulation/core.js";
 import { createComponent, COMPONENT_REGISTRY } from "../simulation/components.js";
 import { SimulationEngine } from "../simulation/simulation_engine.js";
 import { ModuleRegistry, ModuleDefinition, UserModule } from "../simulation/modules.js";
-import { serializeCircuit, deserializeCircuit } from "../simulation/serialization.js";
+import { serializeCircuit, deserializeCircuit, findDefinitionByNameAndType, getUniqueName } from "../simulation/serialization.js";
+import { CommandEngine } from "../simulation/command_engine.js";
 import { Workspace } from "../canvas/workspace.js";
 import { isPointNearWire, drawWire, computeManhattanRoute, isPointNearSegment } from "../canvas/wires.js";
 import { SelectionManager, ClipboardManager, HistoryManager } from "../canvas/interactions.js";
@@ -64,6 +65,10 @@ window.addEventListener("DOMContentLoaded", () => {
     setupUIEvents();
     setupKeyboardShortcuts();
 
+    // Initialize CommandEngine & Setup Power-User Terminal
+    const commandEngine = new CommandEngine(circuit, registry, historyManager, engine);
+    setupTerminal(commandEngine);
+
     // Rebuild initial state
     engine.evaluateAll();
 
@@ -111,6 +116,33 @@ window.addEventListener("DOMContentLoaded", () => {
 
     // Initial state push
     saveHistoryState();
+
+    // Fetch and register custom modules from backend on startup
+    fetch("/api/modules")
+    .then(res => res.json())
+    .then(data => {
+        const modules = data.modules || [];
+        for (const modData of modules) {
+            const def = new ModuleDefinition(
+                modData.id,
+                modData.name,
+                modData.description,
+                modData.category,
+                modData.inputs,
+                modData.outputs,
+                modData.components,
+                modData.wires,
+                modData.moduleType || "Module",
+                modData.type || modData.category || "Custom"
+            );
+            registry.register(def);
+        }
+        rebuildCustomModulesList();
+        engine.evaluateAll();
+        updatePropertiesPanel();
+        updateStatusBar();
+    })
+    .catch(err => console.error("Error loading custom modules on startup:", err));
 
     // Start workspace loop
     requestAnimationFrame(appLoop);
@@ -217,9 +249,8 @@ function setupCanvasEvents() {
             // 2. Check if clicked on an actual Component
             const clickedComp = findComponentAt(world.x, world.y);
             if (clickedComp) {
-                // If it is a Button, handle click
+                // Shift keyheld bypasses activation (Req 7) to prioritize editor operations like selection/dragging
                 if (clickedComp.type === "Button" && !e.shiftKey) {
-                    clickedComp.isPressed = true;
                     clickedComp.triggerClick(engine);
                     selectionManager.selectSingleComponent(clickedComp);
                     saveHistoryState();
@@ -345,13 +376,34 @@ function setupCanvasEvents() {
         }
     });
 
-    canvas.addEventListener("mouseup", (e) => {
-        // Reset Toggle button pressed states on mouseup
+    const deactivateMomentaryButtons = () => {
+        let changed = false;
         for (const comp of circuit.components.values()) {
-            if (comp.type === "Button" && comp.buttonMode === "press") {
-                comp.isPressed = false;
+            if (comp.type === "Button") {
+                if (comp.buttonMode === "press") {
+                    comp.isPressed = false;
+                } else if (comp.buttonMode === "hold") {
+                    if (comp.isPressed) {
+                        comp.isPressed = false;
+                        comp.evaluate();
+                        engine.propagatePin(comp.outputs[0]);
+                        changed = true;
+                    }
+                }
             }
         }
+        if (changed) {
+            engine.propagate();
+        }
+    };
+
+    window.addEventListener("mouseup", deactivateMomentaryButtons);
+    window.addEventListener("blur", deactivateMomentaryButtons);
+    canvas.addEventListener("mouseleave", deactivateMomentaryButtons);
+    canvas.addEventListener("pointercancel", deactivateMomentaryButtons);
+
+    canvas.addEventListener("mouseup", (e) => {
+        deactivateMomentaryButtons();
 
         if (isResizingCableLeft || isResizingCableRight) {
             isResizingCableLeft = false;
@@ -571,6 +623,133 @@ function updateMarqueeSelection() {
             selectionManager.selectedComponents.add(comp);
         }
     }
+}
+
+function setupTerminal(commandEngine) {
+    const panel = document.getElementById("terminal-panel");
+    const header = document.getElementById("terminal-header");
+    const toggleBtn = document.getElementById("btn-toggle-terminal");
+    const toggleIcon = document.getElementById("terminal-toggle-icon");
+    const outputArea = document.getElementById("terminal-output");
+    const inputField = document.getElementById("terminal-input");
+
+    if (!panel || !header || !toggleBtn || !toggleIcon || !outputArea || !inputField) {
+        return;
+    }
+
+    // Toggle collapse
+    const toggleTerminal = () => {
+        panel.classList.toggle("collapsed");
+        const isCollapsed = panel.classList.contains("collapsed");
+        toggleIcon.className = isCollapsed ? "fa-solid fa-chevron-up" : "fa-solid fa-chevron-down";
+        if (!isCollapsed) {
+            inputField.focus();
+        }
+    };
+
+    header.addEventListener("click", toggleTerminal);
+    toggleBtn.addEventListener("click", (e) => {
+        e.stopPropagation(); // prevent header click triggering toggle again
+        toggleTerminal();
+    });
+
+    // History list
+    const history = [];
+    let historyIdx = -1;
+
+    // Helper to log line
+    const logLine = (text, className = "") => {
+        const line = document.createElement("div");
+        line.className = `terminal-line ${className}`;
+        line.textContent = text;
+        outputArea.appendChild(line);
+        outputArea.scrollTop = outputArea.scrollHeight;
+    };
+
+    // Command suggestions for Tab completion
+    const suggestionList = [
+        "add", "move", "connect", "set", "remove", "list", "show", "undo", "redo",
+        "clock", "and", "or", "not", "xor", "nand", "nor", "xnor", "buffer", "button", "input", "output", "led", "npn", "pnp"
+    ];
+
+    inputField.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            const val = inputField.value.trim();
+            if (!val) return;
+
+            // Log command
+            logLine(`> ${val}`, "command-line");
+
+            // Execute command
+            const res = commandEngine.execute(val);
+
+            if (res.success) {
+                logLine(res.message || "Command executed successfully", "success-line");
+                // Immediately refresh workspace rendering and properties
+                commandEngine.engine.evaluateAll();
+                selectionManager.clear();
+                updatePropertiesPanel();
+                updateStatusBar();
+            } else {
+                logLine(res.error || "Execution failed", "error-line");
+            }
+
+            // Save history
+            history.push(val);
+            historyIdx = history.length;
+            inputField.value = "";
+        }
+        else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            if (history.length === 0) return;
+            if (historyIdx > 0) {
+                historyIdx--;
+                inputField.value = history[historyIdx];
+            }
+        }
+        else if (e.key === "ArrowDown") {
+            e.preventDefault();
+            if (history.length === 0) return;
+            if (historyIdx < history.length - 1) {
+                historyIdx++;
+                inputField.value = history[historyIdx];
+            } else {
+                historyIdx = history.length;
+                inputField.value = "";
+            }
+        }
+        else if (e.key === "Tab") {
+            e.preventDefault();
+            const val = inputField.value;
+            const parts = val.trim().split(/\s+/);
+            if (parts.length === 0 || val === "") return;
+
+            const lastWord = parts[parts.length - 1].toLowerCase();
+            
+            // Check suggestions
+            let matches = suggestionList.filter(s => s.startsWith(lastWord));
+
+            // Also suggest existing component names from circuit graph!
+            const compNames = Array.from(commandEngine.circuit.components.keys());
+            const compMatches = compNames.filter(name => name.toLowerCase().startsWith(lastWord));
+            matches = matches.concat(compMatches);
+
+            if (matches.length === 1) {
+                // Perform completion
+                parts[parts.length - 1] = matches[0];
+                inputField.value = parts.join(" ") + " ";
+            } else if (matches.length > 1) {
+                // Show multiple matches
+                logLine(`Suggestions: ${matches.join(", ")}`, "system-line");
+            }
+        }
+        else if (e.key === "Escape") {
+            e.preventDefault();
+            if (!panel.classList.contains("collapsed")) {
+                toggleTerminal();
+            }
+        }
+    });
 }
 
 /**
@@ -856,6 +1035,14 @@ function setupUIEvents() {
         triggerLoadProjectDialog();
     });
 
+    document.getElementById("btn-export-library").addEventListener("click", () => {
+        triggerExportLibrary();
+    });
+
+    document.getElementById("btn-import-library").addEventListener("click", () => {
+        triggerImportLibrary();
+    });
+
     // CUSTOM MODULE CREATION WORKFLOW
     const modal = document.getElementById("create-module-modal");
 
@@ -904,7 +1091,7 @@ function setupUIEvents() {
     document.getElementById("btn-close-module-modal").addEventListener("click", closeModal);
     document.getElementById("btn-cancel-module").addEventListener("click", closeModal);
 
-    document.getElementById("create-module-form").addEventListener("submit", (e) => {
+    document.getElementById("create-module-form").addEventListener("submit", async (e) => {
         e.preventDefault();
         const name = document.getElementById("module-name").value.trim();
         const desc = document.getElementById("module-desc").value.trim();
@@ -913,7 +1100,23 @@ function setupUIEvents() {
 
         if (!name) return;
 
-        const modId = name.toLowerCase().replace(/\s+/g, "_") + "_" + Math.random().toString(36).substring(2, 6);
+        const type = cat || "Custom";
+
+        // Check for duplicate (name, type)
+        const existingDef = findDefinitionByNameAndType(registry, name, type);
+        let finalName = name;
+        let modId = name.toLowerCase().replace(/\s+/g, "_") + "_" + Math.random().toString(36).substring(2, 6);
+        let choice = "new";
+
+        if (existingDef) {
+            choice = await promptDuplicateResolve(name, type);
+            if (choice === "replace") {
+                modId = existingDef.id; // overwrite the same id
+            } else {
+                finalName = getUniqueName(registry, name, type);
+                modId = finalName.toLowerCase().replace(/\s+/g, "_") + "_" + Math.random().toString(36).substring(2, 6);
+            }
+        }
 
         // Serialize selected subcircuit
         const selectedSet = selectionManager.selectedComponents;
@@ -953,32 +1156,38 @@ function setupUIEvents() {
             }
         });
 
-        // Create and register the Definition
-        const newDef = new ModuleDefinition(modId, name, desc, cat, externalInputs, externalOutputs, subComps, subWires, moduleType);
-        registry.register(newDef);
+        if (existingDef && choice === "replace") {
+            // REPLACE: Update existing definition in-place
+            existingDef.name = finalName;
+            existingDef.description = desc;
+            existingDef.category = cat;
+            existingDef.type = type;
+            existingDef.inputs = externalInputs;
+            existingDef.outputs = externalOutputs;
+            existingDef.components = subComps;
+            existingDef.wires = subWires;
+            existingDef.moduleType = moduleType;
 
-        // Save to backend custom modules file
-        fetch("/api/modules", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                id: modId,
-                name,
-                description: desc,
-                category: cat,
-                inputs: externalInputs,
-                outputs: externalOutputs,
-                components: subComps,
-                wires: subWires,
-                moduleType: moduleType
-            })
-        })
-        .then(res => res.json())
-        .then(() => {
-            rebuildCustomModulesList();
-            closeModal();
-            alert(`Custom module '${name}' registered and added to toolbox!`);
-        });
+            await saveModuleToBackend(existingDef);
+
+            // Re-build inner circuit of all active matching instances on canvas
+            for (const other of circuit.components.values()) {
+                if (other.type === "UserModule" && other.definition.id === existingDef.id) {
+                    other.buildInnerCircuit();
+                }
+            }
+            alert(`Custom module '${finalName}' replaced successfully!`);
+        } else {
+            // Create and register the Definition
+            const newDef = new ModuleDefinition(modId, finalName, desc, cat, externalInputs, externalOutputs, subComps, subWires, moduleType, type);
+            registry.register(newDef);
+
+            await saveModuleToBackend(newDef);
+            alert(`Custom module '${finalName}' registered and added to toolbox!`);
+        }
+
+        rebuildCustomModulesList();
+        closeModal();
     });
 
     // Context popup menu trigger handlers
@@ -997,6 +1206,227 @@ function setupUIEvents() {
     document.getElementById("ctx-detach-module").addEventListener("click", () => triggerDetachModuleInstance());
 }
 
+function promptDuplicateResolve(name, type) {
+    return new Promise((resolve) => {
+        const html = `
+            <p style="margin-bottom: 20px; font-size: 13.5px; line-height: 1.5; color: #ddd;">
+                A custom part named <strong>${name}</strong> of type <strong>${type}</strong> already exists.
+            </p>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-resolve-new">Save as New</button>
+                <button class="btn btn-danger" id="btn-resolve-replace">Replace</button>
+            </div>
+        `;
+        openModal('<i class="fa-solid fa-clone" style="color: #ff9f43;"></i> Duplicate Part Found', html, () => {
+            document.getElementById("btn-resolve-new").onclick = () => {
+                closeModal();
+                resolve("new");
+            };
+            document.getElementById("btn-resolve-replace").onclick = () => {
+                closeModal();
+                resolve("replace");
+            };
+        });
+    });
+}
+
+function saveModuleToBackend(def) {
+    return fetch("/api/modules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            id: def.id,
+            name: def.name,
+            description: def.description,
+            category: def.category,
+            type: def.type || def.category || "Custom",
+            inputs: def.inputs,
+            outputs: def.outputs,
+            components: def.components,
+            wires: def.wires,
+            moduleType: def.moduleType || "Module"
+        })
+    }).then(res => {
+        if (!res.ok) throw new Error("Failed to save imported module to backend");
+        return res.json();
+    });
+}
+
+function triggerExportLibrary() {
+    const definitions = [];
+    for (const def of registry.definitions.values()) {
+        definitions.push({
+            id: def.id,
+            name: def.name,
+            description: def.description,
+            category: def.category,
+            type: def.type || def.category || "Custom",
+            inputs: def.inputs,
+            outputs: def.outputs,
+            components: def.components,
+            wires: def.wires,
+            moduleType: def.moduleType || "Module"
+        });
+    }
+
+    const payload = {
+        libraryName: "Custom Parts Library",
+        exportedAt: new Date().toISOString(),
+        definitions: definitions
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 4)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const downloadAnchor = document.createElement("a");
+    downloadAnchor.href = url;
+    downloadAnchor.download = "custom_parts_library.json";
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    URL.revokeObjectURL(url);
+}
+
+function triggerImportLibrary() {
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = ".json";
+    fileInput.style.display = "none";
+    document.body.appendChild(fileInput);
+
+    fileInput.addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        if (!file) {
+            fileInput.remove();
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            try {
+                const data = JSON.parse(event.target.result);
+
+                // 1. Validation
+                if (!data || !Array.isArray(data.definitions)) {
+                    alert("Import Failed: Incompatible or malformed library data.");
+                    return;
+                }
+
+                // 2. Loop through each imported definition
+                const defsToProcess = data.definitions;
+                let importCount = 0;
+
+                for (const defData of defsToProcess) {
+                    // Validate individual definition
+                    if (!defData.id || !defData.name || !Array.isArray(defData.inputs) || !Array.isArray(defData.outputs) || !Array.isArray(defData.components) || !Array.isArray(defData.wires)) {
+                        alert(`Skipping malformed part definition: ${defData.name || "Unknown"}`);
+                        continue;
+                    }
+
+                    const name = defData.name.trim();
+                    const type = (defData.type || defData.category || "Custom").trim();
+
+                    // Check duplicate rule: combination (name, type)
+                    const existingDef = findDefinitionByNameAndType(registry, name, type);
+                    if (existingDef) {
+                        const choice = await promptDuplicateResolve(name, type);
+                        if (choice === "replace") {
+                            // REPLACE: Update existing definition
+                            existingDef.description = defData.description || "";
+                            existingDef.category = defData.category || "Custom";
+                            existingDef.type = type;
+                            existingDef.inputs = defData.inputs;
+                            existingDef.outputs = defData.outputs;
+                            existingDef.components = defData.components;
+                            existingDef.wires = defData.wires;
+                            existingDef.moduleType = defData.moduleType || "Module";
+
+                            // Save to backend custom modules file
+                            await saveModuleToBackend(existingDef);
+
+                            // Re-evaluate matching instances on canvas
+                            for (const other of circuit.components.values()) {
+                                if (other.type === "UserModule" && other.definition.id === existingDef.id) {
+                                    other.buildInnerCircuit();
+                                }
+                            }
+                            importCount++;
+                        } else if (choice === "new") {
+                            // SAVE AS NEW: Generate unique name & ID
+                            const uniqueName = getUniqueName(registry, name, type);
+                            const uniqueId = uniqueName.toLowerCase().replace(/\s+/g, "_") + "_" + Math.random().toString(36).substring(2, 6);
+
+                            const newDef = new ModuleDefinition(
+                                uniqueId,
+                                uniqueName,
+                                defData.description || "",
+                                defData.category || "Custom",
+                                defData.inputs,
+                                defData.outputs,
+                                defData.components,
+                                defData.wires,
+                                defData.moduleType || "Module",
+                                type
+                            );
+
+                            registry.register(newDef);
+                            await saveModuleToBackend(newDef);
+                            importCount++;
+                        }
+                    } else {
+                        // NO DUPLICATE: Register and save
+                        // Ensure unique ID in registry to be safe
+                        let uniqueId = defData.id;
+                        if (registry.get(uniqueId)) {
+                            uniqueId = defData.id.split("_").slice(0, -1).join("_") + "_" + Math.random().toString(36).substring(2, 6);
+                        }
+
+                        const newDef = new ModuleDefinition(
+                            uniqueId,
+                            name,
+                            defData.description || "",
+                            defData.category || "Custom",
+                            defData.inputs,
+                            defData.outputs,
+                            defData.components,
+                            defData.wires,
+                            defData.moduleType || "Module",
+                            type
+                        );
+
+                        registry.register(newDef);
+                        await saveModuleToBackend(newDef);
+                        importCount++;
+                    }
+                }
+
+                rebuildCustomModulesList();
+                engine.evaluateAll();
+                saveHistoryState();
+                updatePropertiesPanel();
+                updateStatusBar();
+                alert(`Successfully imported ${importCount} custom parts!`);
+
+            } catch (err) {
+                console.error(err);
+                alert("Import Failed: Invalid JSON format.");
+            } finally {
+                fileInput.remove();
+            }
+        };
+
+        reader.readAsText(file);
+    });
+
+    fileInput.click();
+}
+
+function formatTypeName(type) {
+    if (!type) return "Custom";
+    return type.split(/[\s_-]+/)
+               .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+               .join(" ");
+}
+
 /**
  * Rebuild Custom modules toolbox buttons
  */
@@ -1009,16 +1439,56 @@ function rebuildCustomModulesList() {
         return;
     }
 
+    // Group definitions by their type
+    const groups = new Map();
     for (const def of registry.definitions.values()) {
-        const item = document.createElement("div");
-        item.className = "toolbox-item";
-        item.setAttribute("data-type", `UserModule:${def.id}`);
-        item.innerHTML = `<i class="fa-solid fa-cube"></i> ${def.name}`;
-        item.addEventListener("click", () => {
-            placingComponentType = `UserModule:${def.id}`;
-            canvas.style.cursor = "copy";
-        });
-        list.appendChild(item);
+        const typeKey = (def.type || def.category || "Custom").trim();
+        if (!groups.has(typeKey)) {
+            groups.set(typeKey, []);
+        }
+        groups.get(typeKey).push(def);
+    }
+
+    // Sort group keys to be alphabetical
+    const sortedKeys = Array.from(groups.keys()).sort();
+
+    for (const typeKey of sortedKeys) {
+        const defs = groups.get(typeKey);
+        
+        // Create section for this type
+        const section = document.createElement("div");
+        section.className = "custom-group-section";
+        section.style.marginBottom = "10px";
+
+        const header = document.createElement("h4");
+        header.className = "custom-group-header";
+        header.style.margin = "5px 0";
+        header.style.color = "#00adb5";
+        header.style.fontSize = "12px";
+        header.style.borderBottom = "1px solid #3d3d3d";
+        header.style.paddingBottom = "3px";
+        header.style.textTransform = "capitalize";
+        header.textContent = formatTypeName(typeKey);
+        
+        section.appendChild(header);
+
+        const itemsContainer = document.createElement("div");
+        itemsContainer.className = "custom-group-items";
+
+        for (const def of defs) {
+            const item = document.createElement("div");
+            item.className = "toolbox-item";
+            item.setAttribute("data-type", `UserModule:${def.id}`);
+            item.innerHTML = `<i class="fa-solid fa-cube"></i> ${def.name}`;
+            item.addEventListener("click", () => {
+                placingComponentType = `UserModule:${def.id}`;
+                canvas.style.cursor = "copy";
+            });
+            itemsContainer.appendChild(item);
+        }
+
+        section.appendChild(itemsContainer);
+        list.appendChild(section);
     }
 }
 
@@ -1310,25 +1780,77 @@ function updatePropertiesPanel() {
 
         // Bind custom module rename/delete definition triggers!
         if (comp.type === "UserModule") {
-            document.getElementById("btn-save-def-rename").addEventListener("click", () => {
+            document.getElementById("btn-save-def-rename").addEventListener("click", async () => {
                 const newName = document.getElementById("def-prop-name").value.trim();
-                if (newName) {
-                    registry.rename(comp.definition.id, newName);
-                    // Update current instance label and definition name
-                    comp.definition.name = newName;
-                    comp.label = newName;
-                    // Propagate to all matching instances on canvas!
-                    for (const other of circuit.components.values()) {
-                        if (other.type === "UserModule" && other.definition.id === comp.definition.id) {
-                            other.definition.name = newName;
-                            other.label = newName;
-                        }
-                    }
-                    rebuildCustomModulesList();
-                    saveHistoryState();
-                    updatePropertiesPanel();
-                    alert("Module definition renamed successfully!");
+                if (!newName) return;
+
+                const type = comp.definition.type || comp.definition.category || "Custom";
+                if (newName.toLowerCase().trim() === comp.definition.name.toLowerCase().trim()) {
+                    return; // No change
                 }
+
+                const existingDef = findDefinitionByNameAndType(registry, newName, type);
+                let finalName = newName;
+
+                if (existingDef) {
+                    const choice = await promptDuplicateResolve(newName, type);
+                    if (choice === "replace") {
+                        // REPLACE:
+                        // Delete the current definition and update existingDef to use current definition's circuit data
+                        existingDef.components = comp.definition.components;
+                        existingDef.wires = comp.definition.wires;
+                        existingDef.inputs = comp.definition.inputs;
+                        existingDef.outputs = comp.definition.outputs;
+                        existingDef.description = comp.definition.description;
+                        existingDef.moduleType = comp.definition.moduleType;
+
+                        await saveModuleToBackend(existingDef);
+
+                        // Point all instances on canvas of deleted definition to existingDef!
+                        const oldId = comp.definition.id;
+                        for (const other of circuit.components.values()) {
+                            if (other.type === "UserModule" && other.definition.id === oldId) {
+                                other.definition = existingDef;
+                                other.label = existingDef.name;
+                                other.buildInnerCircuit();
+                            }
+                        }
+
+                        // Call backend API to delete the old custom module definition file
+                        fetch(`/api/modules/${encodeURIComponent(oldId)}`, { method: "DELETE" })
+                        .then(() => {
+                            registry.delete(oldId);
+                            rebuildCustomModulesList();
+                            saveHistoryState();
+                            updatePropertiesPanel();
+                            alert(`Definition successfully merged into '${existingDef.name}'!`);
+                        });
+                        return;
+
+                    } else {
+                        // SAVE AS NEW (get unique name):
+                        finalName = getUniqueName(registry, newName, type);
+                    }
+                }
+
+                // If no duplicate or resolved as new:
+                registry.rename(comp.definition.id, finalName);
+                comp.definition.name = finalName;
+                comp.label = finalName;
+                // Propagate rename to all matching instances on canvas!
+                for (const other of circuit.components.values()) {
+                    if (other.type === "UserModule" && other.definition.id === comp.definition.id) {
+                        other.definition.name = finalName;
+                        other.label = finalName;
+                    }
+                }
+                // Save updated definition to backend
+                await saveModuleToBackend(comp.definition);
+
+                rebuildCustomModulesList();
+                saveHistoryState();
+                updatePropertiesPanel();
+                alert(`Module definition renamed to '${finalName}' successfully!`);
             });
 
             document.getElementById("btn-delete-def").addEventListener("click", () => {
@@ -1606,15 +2128,29 @@ function triggerDetachModuleInstance() {
         const originX = comp.x;
         const originY = comp.y;
 
-        // Map to correlate internal clone IDs to new external gate instances
-        const idMap = new Map();
+        // 1. Gather external wires before removing the component
+        const extPinIds = new Set(comp.pins().map(p => p.id));
+        const extWiresToInputs = [];  // wires going into custom module inputs
+        const extWiresFromOutputs = []; // wires coming out of custom module outputs
 
-        // 1. Re-instantiate all internal components of the module onto main circuit
+        for (const wire of circuit.wires.values()) {
+            if (wire.toPin && extPinIds.has(wire.toPin.id)) {
+                extWiresToInputs.push(wire);
+            } else if (wire.fromPin && extPinIds.has(wire.fromPin.id)) {
+                extWiresFromOutputs.push(wire);
+            }
+        }
+
+        // 2. Re-instantiate all internal components of the module onto main circuit
+        const idMap = new Map();
+        const inputsToGates = new Map(); // pin name -> instantiated InputGate
+        const outputsToGates = new Map(); // pin name -> instantiated OutputGate
+
         for (const innerC of comp.definition.components) {
             const newId = `${innerC.type.toLowerCase().replace(/\s+/g, "_")}_${Math.random().toString(36).substring(2, 8)}`;
 
             let newGate;
-            if (innerC.type === "UserModule") {
+            if (innerC.type === "UserModule" && innerC.definition) {
                 newGate = new UserModule(newId, innerC.definition, originX + innerC.x, originY + innerC.y);
             } else {
                 newGate = createComponent(innerC.type, newId, originX + innerC.x, originY + innerC.y);
@@ -1622,11 +2158,17 @@ function triggerDetachModuleInstance() {
             newGate.label = innerC.label;
             circuit.addComponent(newGate);
             idMap.set(innerC.id, newGate);
+
+            if (innerC.type === "Input") {
+                inputsToGates.set(innerC.label || innerC.id, newGate);
+            } else if (innerC.type === "Output") {
+                outputsToGates.set(innerC.label || innerC.id, newGate);
+            }
         }
 
-        // 2. Re-create all internal wire links on main circuit
+        // 3. Re-create all internal wire links on main circuit
+        const instantiatedIntWires = [];
         for (const innerW of comp.definition.wires) {
-            // Find old wire terminal pins original parent ID
             const srcCompId = innerW.fromPin.split("_").slice(0, -1).join("_");
             const tgtCompId = innerW.toPin.split("_").slice(0, -1).join("_");
 
@@ -1634,11 +2176,9 @@ function triggerDetachModuleInstance() {
             const tgtNewGate = idMap.get(tgtCompId);
 
             if (srcNewGate && tgtNewGate) {
-                // Pin references
                 const srcPinName = innerW.fromPin.split("_").slice(-1)[0];
                 const tgtPinName = innerW.toPin.split("_").slice(-1)[0];
 
-                // Map by index or name
                 const srcPin = srcNewGate.outputs.find(p => p.name === srcPinName) || srcNewGate.outputs[0];
                 const tgtPin = tgtNewGate.inputs.find(p => p.name === tgtPinName) || tgtNewGate.inputs[0];
 
@@ -1646,11 +2186,50 @@ function triggerDetachModuleInstance() {
                     const newWireId = `wire_${Math.random().toString(36).substring(2, 9)}`;
                     const wireObj = new Wire(newWireId, srcPin, tgtPin, innerW.color || null);
                     circuit.addWire(wireObj);
+                    instantiatedIntWires.push(wireObj);
                 }
             }
         }
 
-        // 3. Remove the parent module instance
+        // 4. Remap input wires:
+        // For each external wire going into a custom module's input pin:
+        for (const extWire of extWiresToInputs) {
+            const pinName = extWire.toPin.name;
+            const newGate = inputsToGates.get(pinName);
+            if (newGate) {
+                // Find internal wires that start from this InputGate's output pin
+                const intWires = instantiatedIntWires.filter(w => w.fromPin === newGate.outputs[0]);
+                for (const w of intWires) {
+                    w.fromPin = extWire.fromPin;
+                    w.points = [];
+                    w.isManuallyRouted = false;
+                }
+                // Delete the InputGate and the original external wire from the circuit
+                circuit.removeComponent(newGate.id);
+                circuit.removeWire(extWire.id);
+            }
+        }
+
+        // 5. Remap output wires:
+        // For each external wire coming out of a custom module's output pin:
+        for (const extWire of extWiresFromOutputs) {
+            const pinName = extWire.fromPin.name;
+            const newGate = outputsToGates.get(pinName);
+            if (newGate) {
+                // Find internal wire that ends at this OutputGate's input pin
+                const intWire = instantiatedIntWires.find(w => w.toPin === newGate.inputs[0]);
+                if (intWire) {
+                    extWire.fromPin = intWire.fromPin;
+                    extWire.points = [];
+                    extWire.isManuallyRouted = false;
+                    // Delete the OutputGate and the internal wire
+                    circuit.removeComponent(newGate.id);
+                    circuit.removeWire(intWire.id);
+                }
+            }
+        }
+
+        // 6. Finally, remove the parent custom module component itself
         circuit.removeComponent(comp.id);
 
         selectionManager.clear();
