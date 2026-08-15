@@ -2,6 +2,8 @@ import { createComponent, COMPONENT_REGISTRY } from "./components.js";
 import { Wire } from "./core.js";
 import { UserModule } from "./modules.js";
 import { serializeCircuit, deserializeCircuit } from "./serialization.js";
+import { parseBooleanExpression } from "./expr_parser.js";
+import { synthesizeExpression } from "./expr_synthesizer.js";
 
 /**
  * Parses and executes circuit graph commands.
@@ -92,6 +94,8 @@ export class CommandEngine {
                     return this._handleUndo();
                 case "redo":
                     return this._handleRedo();
+                case "expr":
+                    return this._handleExpr(trimmed);
                 default:
                     return { success: false, error: `Unknown command '${parts[0]}'` };
             }
@@ -521,6 +525,42 @@ export class CommandEngine {
             return { success: true, message: "Redo executed successfully" };
         }
         return { success: false, error: "No state to redo" };
+    }
+
+    _handleExpr(trimmed) {
+        // Syntax: expr OUTPUT = BOOLEAN_EXPRESSION
+        const exprBody = trimmed.replace(/^expr\s+/i, "").trim();
+        const eqIdx = exprBody.indexOf("=");
+        if (eqIdx === -1) {
+            return { success: false, error: "Syntax: expr OUTPUT = BOOLEAN_EXPRESSION" };
+        }
+
+        const outputName = exprBody.substring(0, eqIdx).trim();
+        const exprStr = exprBody.substring(eqIdx + 1).trim();
+
+        if (!outputName) {
+            return { success: false, error: "Syntax: expr OUTPUT = BOOLEAN_EXPRESSION" };
+        }
+
+        if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(outputName)) {
+            return { success: false, error: "Invalid output name identifier (must be alphanumeric starting with a letter)" };
+        }
+
+        if (!exprStr) {
+            return { success: false, error: "Missing boolean expression after '='" };
+        }
+
+        try {
+            const astNode = parseBooleanExpression(exprStr);
+            synthesizeExpression(this.circuit, outputName, astNode, this.engine);
+            if (this.engine) {
+                this.engine.evaluateAll();
+            }
+            this._saveHistory();
+            return { success: true, message: `Successfully synthesized expression for '${outputName}'` };
+        } catch (e) {
+            return { success: false, error: `Invalid expression: ${e.message}` };
+        }
     }
 
     /**
