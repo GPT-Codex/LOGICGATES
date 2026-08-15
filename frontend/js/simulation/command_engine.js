@@ -682,20 +682,19 @@ export class CommandEngine {
 
         // 3. Common aliases
         if (pinType === "output") {
-            if (pins.length === 1 && ["out", "output", "q", "y", "clk"].includes(lowerRef)) {
+            if (["out", "output", "q", "y", "clk"].includes(lowerRef)) {
                 return pins[0];
             }
-            found = pins.find(p => ["q", "y", "clk", "out"].includes(p.name.toLowerCase()));
-            if (found) return found;
         } else if (pinType === "input") {
             if (pins.length === 1 && ["in", "input", "d", "a"].includes(lowerRef)) {
                 return pins[0];
             }
-            found = pins.find(p => ["d", "in", "a"].includes(p.name.toLowerCase()));
-            if (found) return found;
+            if (["in", "input"].includes(lowerRef)) {
+                return pins[0];
+            }
         }
 
-        return pins[0] || null;
+        return null;
     }
 
     /**
