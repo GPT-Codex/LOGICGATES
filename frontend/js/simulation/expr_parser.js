@@ -32,6 +32,18 @@ export function tokenize(str) {
             while (i < str.length && /[a-zA-Z0-9_]/.test(str[i])) {
                 i++;
             }
+            // Support index brackets like [0] or [1][2]
+            while (i < str.length && str[i] === "[") {
+                const bracketEnd = str.indexOf("]", i);
+                if (bracketEnd !== -1) {
+                    const inner = str.substring(i + 1, bracketEnd);
+                    if (/^\d+$/.test(inner.trim())) {
+                        i = bracketEnd + 1;
+                        continue;
+                    }
+                }
+                break;
+            }
             const word = str.substring(start, i);
             const upper = word.toUpperCase();
             if (["NOT", "AND", "OR", "XOR", "NAND", "NOR", "XNOR"].includes(upper)) {

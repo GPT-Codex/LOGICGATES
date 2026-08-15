@@ -4,6 +4,7 @@ import { UserModule } from "./modules.js";
 import { serializeCircuit, deserializeCircuit } from "./serialization.js";
 import { parseBooleanExpression } from "./expr_parser.js";
 import { synthesizeExpression } from "./expr_synthesizer.js";
+import { expandScript } from "./script_parser.js";
 
 /**
  * Parses and executes circuit graph commands.
@@ -190,8 +191,8 @@ export class CommandEngine {
             return { success: false, error: `Unknown component type '${rawTypeStr}'` };
         }
 
-        // Validate NAME identifier
-        if (!/^[a-zA-Z][a-zA-Z0-9_]*(\[\d+\])?$/.test(name)) {
+        // Validate NAME identifier (supports multi-dimensional indexing e.g. G[0], G[1][2])
+        if (!/^[a-zA-Z][a-zA-Z0-9_]*(\[\d+\])*$/.test(name)) {
             return { success: false, error: "Invalid name identifier (must be alphanumeric starting with a letter)" };
         }
 
@@ -271,8 +272,8 @@ export class CommandEngine {
 
         const name = parts[1];
 
-        // Validate NAME identifier
-        if (!/^[a-zA-Z][a-zA-Z0-9_]*(\[\d+\])?$/.test(name)) {
+        // Validate NAME identifier (supports indexing)
+        if (!/^[a-zA-Z][a-zA-Z0-9_]*(\[\d+\])*$/.test(name)) {
             return { success: false, error: "Invalid net identifier (must be alphanumeric starting with a letter)" };
         }
 
@@ -635,7 +636,7 @@ export class CommandEngine {
             return { success: false, error: "Syntax: expr OUTPUT = BOOLEAN_EXPRESSION" };
         }
 
-        if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(outputName)) {
+        if (!/^[a-zA-Z][a-zA-Z0-9_]*(\[\d+\])*$/.test(outputName)) {
             return { success: false, error: "Invalid output name identifier (must be alphanumeric starting with a letter)" };
         }
 
@@ -709,28 +710,23 @@ export class CommandEngine {
             return { success: false, error: "Invalid script content" };
         }
 
+        let expandedList;
+        try {
+            expandedList = expandScript(scriptText);
+        } catch (e) {
+            return {
+                success: false,
+                error: e.message
+            };
+        }
+
         const initialSnap = JSON.stringify(serializeCircuit(this.circuit, this.registry));
-        const lines = scriptText.split(/\r?\n/);
 
         this.inTransaction = true;
         let executedCount = 0;
 
-        for (let i = 0; i < lines.length; i++) {
-            const lineNum = i + 1; // 1-based index
-            let rawLine = lines[i];
-
-            // Strip comment starting with '#'
-            const commentIdx = rawLine.indexOf("#");
-            if (commentIdx !== -1) {
-                rawLine = rawLine.substring(0, commentIdx);
-            }
-
-            const trimmed = rawLine.trim();
-            if (!trimmed) {
-                continue; // Blank or comment-only line
-            }
-
-            const res = this.execute(trimmed);
+        for (const item of expandedList) {
+            const res = this.execute(item.command);
             if (!res.success) {
                 // Roll back circuit graph to initial snapshot
                 deserializeCircuit(JSON.parse(initialSnap), this.circuit, this.registry);
@@ -739,10 +735,11 @@ export class CommandEngine {
                 }
                 this.inTransaction = false;
 
-                const errMsg = `Line ${lineNum}: ${res.error}`;
+                const contextHeader = item.loopContext ? `${item.loopContext}\n` : "";
+                const errMsg = `Line ${item.line}:\n${contextHeader}${res.error}`;
                 return {
                     success: false,
-                    line: lineNum,
+                    line: item.line,
                     error: errMsg,
                     message: errMsg
                 };
