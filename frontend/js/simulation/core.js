@@ -76,6 +76,7 @@ export class Component {
         this.rotation = 0; // 0, 90, 180, 270 degrees
         this.flipX = false;
         this.flipY = false;
+        this.isExplicitPosition = false;
         
         /** @type {Pin[]} */
         this.inputs = [];

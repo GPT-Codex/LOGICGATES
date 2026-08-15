@@ -47,7 +47,8 @@ export function serializeCircuit(circuit, registry) {
             label: comp.label || "",
             rotation: comp.rotation || 0,
             flipX: comp.flipX || false,
-            flipY: comp.flipY || false
+            flipY: comp.flipY || false,
+            isExplicitPosition: comp.isExplicitPosition || false
         };
 
         if (comp.type === "Clock") {
@@ -176,6 +177,7 @@ export function deserializeCircuit(data, circuit, registry) {
         comp.rotation = compData.rotation || 0;
         comp.flipX = compData.flipX || false;
         comp.flipY = compData.flipY || false;
+        comp.isExplicitPosition = compData.isExplicitPosition || false;
 
         if (comp.type === "Clock") {
             if (compData.frequencyValue !== undefined) {

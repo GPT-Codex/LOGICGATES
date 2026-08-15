@@ -195,15 +195,31 @@ export function synthesizeExpression(circuit, outputName, astNode, engine) {
         throw new Error(`Unsupported AST node type: ${node.type}`);
     }
 
+    // Self-referential check
+    function checkSelfReference(node) {
+        if (node.type === "Variable") {
+            if (node.name === outputName) {
+                throw new Error(`Cannot define '${outputName}' because it is referenced by its own expression.`);
+            }
+        } else if (node.type === "Unary") {
+            checkSelfReference(node.expr);
+        } else if (node.type === "Binary") {
+            checkSelfReference(node.left);
+            checkSelfReference(node.right);
+        }
+    }
+    checkSelfReference(astNode);
+
+    // Track pre-existing component IDs to treat them as anchors
+    const preExistingIds = new Set(circuit.components.keys());
+
     // Synthesize expression AST
     const rootRes = buildNode(astNode);
 
     // Target output component
     let outComp = circuit.components.get(outputName);
     if (!outComp) {
-        const rootDepth = getNodeDepth(astNode);
-        const pos = getNextPos(rootDepth + 1);
-        outComp = createComponent("Output", outputName, pos.x, pos.y);
+        outComp = createComponent("Output", outputName, 600, 100);
         outComp.label = outputName;
         circuit.addComponent(outComp);
     }
@@ -211,8 +227,8 @@ export function synthesizeExpression(circuit, outputName, astNode, engine) {
     const outInPin = findPin(outComp, "D", "input");
     connectPins(circuit, rootRes.pin, outInPin);
 
-    // Run deterministic auto-layout pass
-    applyAutoLayout(circuit);
+    // Run local expression layout pass for newly synthesized components
+    layoutLocalExpression(circuit, astNode, outputName, memoMap, preExistingIds);
 
     if (engine) {
         engine.evaluateAll();
@@ -222,12 +238,134 @@ export function synthesizeExpression(circuit, outputName, astNode, engine) {
 }
 
 /**
+ * Local expression layout for newly synthesized intermediate components and outputs.
+ * Preserves exact positions of all explicitly positioned components and pre-existing unrelated components.
+ */
+function layoutLocalExpression(circuit, astNode, outputName, memoMap, preExistingIds) {
+    const newlyCreatedComps = [];
+    for (const res of memoMap.values()) {
+        if (res.comp && !preExistingIds.has(res.comp.id) && !res.comp.isExplicitPosition) {
+            newlyCreatedComps.push(res.comp);
+        }
+    }
+
+    const outComp = circuit.components.get(outputName);
+    if (outComp && !preExistingIds.has(outComp.id) && !outComp.isExplicitPosition) {
+        if (!newlyCreatedComps.includes(outComp)) {
+            newlyCreatedComps.push(outComp);
+        }
+    }
+
+    if (newlyCreatedComps.length === 0) {
+        return; // Nothing newly created to position!
+    }
+
+    // If no components in the circuit have been explicitly positioned by the user,
+    // apply global auto-layout to keep automatically generated circuits clean.
+    const hasExplicitComps = Array.from(circuit.components.values()).some(c => c.isExplicitPosition);
+
+    if (!hasExplicitComps) {
+        applyAutoLayout(circuit);
+        return;
+    }
+
+    // Identify anchor components referenced by this expression
+    const refVarNames = new Set();
+    function collectVars(node) {
+        if (node.type === "Variable") {
+            refVarNames.add(node.name);
+        } else if (node.type === "Unary") {
+            collectVars(node.expr);
+        } else if (node.type === "Binary") {
+            collectVars(node.left);
+            collectVars(node.right);
+        }
+    }
+    collectVars(astNode);
+
+    // Calculate anchor bounding / centroid
+    const anchorComps = [];
+    for (const varName of refVarNames) {
+        const c = circuit.components.get(varName);
+        if (c) anchorComps.push(c);
+    }
+
+    let minAnchorX = 100, maxAnchorX = 100, avgAnchorY = 100;
+    if (anchorComps.length > 0) {
+        minAnchorX = Math.min(...anchorComps.map(c => c.x));
+        maxAnchorX = Math.max(...anchorComps.map(c => c.x));
+        avgAnchorY = anchorComps.reduce((sum, c) => sum + c.y, 0) / anchorComps.length;
+    }
+
+    // Check if target output component is an anchor (pre-existing or explicit)
+    let outAnchorX = maxAnchorX + 300;
+    let outAnchorY = avgAnchorY;
+    if (outComp && (preExistingIds.has(outComp.id) || outComp.isExplicitPosition)) {
+        outAnchorX = outComp.x;
+        outAnchorY = outComp.y;
+    }
+
+    // Calculate depth for newly created intermediate gates
+    const newlyGates = newlyCreatedComps.filter(c => c !== outComp);
+
+    // Group newlyGates by topological depth
+    const newlyDepthMap = new Map();
+    let maxNewDepth = 1;
+    for (const gate of newlyGates) {
+        let maxSrcDepth = 0;
+        for (const wire of circuit.wires.values()) {
+            if (wire.toPin && wire.toPin.component.id === gate.id && wire.fromPin) {
+                const srcId = wire.fromPin.component.id;
+                const srcD = newlyDepthMap.get(srcId) || 0;
+                if (srcD > maxSrcDepth) {
+                    maxSrcDepth = srcD;
+                }
+            }
+        }
+        const depth = maxSrcDepth + 1;
+        newlyDepthMap.set(gate.id, depth);
+        if (depth > maxNewDepth) maxNewDepth = depth;
+    }
+
+    // Column spacing between input anchors and output anchor (default 160px step)
+    const totalCols = maxNewDepth + 1;
+    let xStep = 160;
+    if (outComp && (preExistingIds.has(outComp.id) || outComp.isExplicitPosition)) {
+        xStep = Math.max(140, Math.floor((outAnchorX - maxAnchorX) / totalCols));
+    }
+
+    // Position newly created gates
+    const depthYCount = new Map();
+    for (const gate of newlyGates) {
+        const d = newlyDepthMap.get(gate.id) || 1;
+        const count = depthYCount.get(d) || 0;
+        depthYCount.set(d, count + 1);
+
+        const x = maxAnchorX + d * xStep;
+        const startY = anchorComps.length > 0 ? avgAnchorY : 100;
+        const y = startY + count * 80;
+
+        gate.x = Math.round(x / 20) * 20;
+        gate.y = Math.round(y / 20) * 20;
+    }
+
+    // Position output component if it was newly created and not explicit
+    if (outComp && !preExistingIds.has(outComp.id) && !outComp.isExplicitPosition) {
+        const x = maxAnchorX + (maxNewDepth + 1) * xStep;
+        const startY = anchorComps.length > 0 ? avgAnchorY : 100;
+        outComp.x = Math.round(x / 20) * 20;
+        outComp.y = Math.round(startY / 20) * 20;
+    }
+}
+
+/**
  * Auto-layout components in layered columns:
  * - Inputs placed on the left (Column 0) sorted alphabetically.
  * - Intermediate gates placed in topological depth columns (Columns 1..D).
  * - Outputs placed on the right (Column D+1).
  * - Barycenter Y-ordering heuristic minimizes wire crossings deterministically.
  * - All coordinates strictly aligned to 20px grid.
+ * - Respects `comp.isExplicitPosition` flag so explicitly positioned components are never moved!
  */
 export function applyAutoLayout(circuit) {
     if (!circuit || circuit.components.size === 0) return;
@@ -357,8 +495,10 @@ export function applyAutoLayout(circuit) {
         });
     }
 
-    // 6. Apply Grid-Aligned Coordinates
+    // 6. Apply Grid-Aligned Coordinates (skipping explicitly positioned components)
     comps.forEach(comp => {
+        if (comp.isExplicitPosition) return;
+
         const d = depthMap.get(comp.id) || 0;
         const x = 100 + d * 160;
         const y = yPosMap.get(comp.id) || 100;

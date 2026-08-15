@@ -254,6 +254,7 @@ export class CommandEngine {
             comp.x += val1;
             comp.y += val2;
         }
+        comp.isExplicitPosition = true;
 
         // Update pins side math for user modules if applicable
         if (comp.type === "UserModule" && typeof comp.applyPinSideMath === "function") {
@@ -296,14 +297,15 @@ export class CommandEngine {
 
     _handleConnect(parts, original) {
         // Syntax:
-        // connect FROM TO
-        // connect CLK.out G1.A OR connect CLK G1.A OR connect A B
-        if (parts.length < 3) {
+        // connect FROM TO OR connect FROM -> TO
+        // Filter out optional arrow tokens if present
+        const filteredParts = parts.filter(p => p !== "->" && p !== "=>");
+        if (filteredParts.length < 3) {
             return { success: false, error: "Syntax: connect FROM TO (e.g. connect CLK.out G1.A)" };
         }
 
-        const fromRef = parts[1];
-        const toRef = parts[2];
+        const fromRef = filteredParts[1];
+        const toRef = filteredParts[2];
 
         // Parse FROM
         let fromCompName = fromRef;
