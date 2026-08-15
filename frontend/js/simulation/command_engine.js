@@ -74,10 +74,28 @@ export class CommandEngine {
 
         const cmd = parts[0].toLowerCase();
 
+        // Handle bus range expansion (e.g. IN[0..3])
+        if (trimmed.includes("..")) {
+            try {
+                const expanded = this._expandBusCommand(trimmed);
+                let lastRes = { success: true, message: `Successfully executed bus command` };
+                for (const singleCmd of expanded) {
+                    const res = this.execute(singleCmd);
+                    if (!res.success) return res;
+                    lastRes = res;
+                }
+                return lastRes;
+            } catch (e) {
+                return { success: false, error: e.message };
+            }
+        }
+
         try {
             switch (cmd) {
                 case "add":
                     return this._handleAdd(parts, trimmed);
+                case "net":
+                    return this._handleNet(parts, trimmed);
                 case "move":
                     return this._handleMove(parts, trimmed);
                 case "connect":
@@ -102,6 +120,45 @@ export class CommandEngine {
         } catch (e) {
             return { success: false, error: `Execution error: ${e.message}` };
         }
+    }
+
+    _expandBusCommand(commandStr) {
+        const rangeRegex = /([a-zA-Z][a-zA-Z0-9_]*)\[(\d+)\.\.(\d+)\]/g;
+        const matches = Array.from(commandStr.matchAll(rangeRegex));
+
+        if (matches.length === 0) {
+            return [commandStr];
+        }
+
+        const firstStart = parseInt(matches[0][2], 10);
+        const firstEnd = parseInt(matches[0][3], 10);
+        const count = Math.abs(firstEnd - firstStart) + 1;
+
+        for (const m of matches) {
+            const s = parseInt(m[2], 10);
+            const e = parseInt(m[3], 10);
+            const len = Math.abs(e - s) + 1;
+            if (len !== count) {
+                throw new Error(`Bus range mismatch in command '${commandStr}': ranges have different lengths`);
+            }
+        }
+
+        const expanded = [];
+        for (let step = 0; step < count; step++) {
+            let currentCmd = commandStr;
+            for (const m of matches) {
+                const baseName = m[1];
+                const start = parseInt(m[2], 10);
+                const end = parseInt(m[3], 10);
+                const dir = start <= end ? 1 : -1;
+                const idx = start + dir * step;
+                const targetStr = `${baseName}[${idx}]`;
+                currentCmd = currentCmd.replace(m[0], targetStr);
+            }
+            expanded.push(currentCmd);
+        }
+
+        return expanded;
     }
 
     _handleAdd(parts, original) {
@@ -134,7 +191,7 @@ export class CommandEngine {
         }
 
         // Validate NAME identifier
-        if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(name)) {
+        if (!/^[a-zA-Z][a-zA-Z0-9_]*(\[\d+\])?$/.test(name)) {
             return { success: false, error: "Invalid name identifier (must be alphanumeric starting with a letter)" };
         }
 
@@ -206,9 +263,40 @@ export class CommandEngine {
         return { success: true, message: `Successfully moved component '${name}'` };
     }
 
+    _handleNet(parts, original) {
+        // Syntax: net NAME
+        if (parts.length < 2) {
+            return { success: false, error: "Syntax: net NAME" };
+        }
+
+        const name = parts[1];
+
+        // Validate NAME identifier
+        if (!/^[a-zA-Z][a-zA-Z0-9_]*(\[\d+\])?$/.test(name)) {
+            return { success: false, error: "Invalid net identifier (must be alphanumeric starting with a letter)" };
+        }
+
+        if (this.circuit.components.has(name)) {
+            return { success: true, message: `Net '${name}' already exists` };
+        }
+
+        // Create Buffer gate representing the net node
+        const netComp = createComponent("Buffer", name, 100, 100);
+        netComp.label = name;
+        this.circuit.addComponent(netComp);
+
+        if (this.engine) {
+            this.engine.evaluateAll();
+        }
+        this._saveHistory();
+
+        return { success: true, message: `Successfully created net '${name}'` };
+    }
+
     _handleConnect(parts, original) {
-        // Syntax: connect FROM TO
-        // connect CLK.out G1.A
+        // Syntax:
+        // connect FROM TO
+        // connect CLK.out G1.A OR connect CLK G1.A OR connect A B
         if (parts.length < 3) {
             return { success: false, error: "Syntax: connect FROM TO (e.g. connect CLK.out G1.A)" };
         }
@@ -216,27 +304,32 @@ export class CommandEngine {
         const fromRef = parts[1];
         const toRef = parts[2];
 
-        const fromParts = fromRef.split(".");
-        const toParts = toRef.split(".");
-
-        if (fromParts.length < 2 || toParts.length < 2) {
-            return { success: false, error: "Invalid pin references, expected format COMPONENT.PIN" };
+        // Parse FROM
+        let fromCompName = fromRef;
+        let fromPinName = null;
+        if (fromRef.includes(".")) {
+            const lastIdx = fromRef.lastIndexOf(".");
+            fromCompName = fromRef.substring(0, lastIdx);
+            fromPinName = fromRef.substring(lastIdx + 1);
         }
 
-        const fromCompName = fromParts[0];
-        const fromPinName = fromParts[1];
-
-        const toCompName = toParts[0];
-        const toPinName = toParts[1];
+        // Parse TO
+        let toCompName = toRef;
+        let toPinName = null;
+        if (toRef.includes(".")) {
+            const lastIdx = toRef.lastIndexOf(".");
+            toCompName = toRef.substring(0, lastIdx);
+            toPinName = toRef.substring(lastIdx + 1);
+        }
 
         const fromComp = this.circuit.components.get(fromCompName);
         if (!fromComp) {
-            return { success: false, error: `Unknown component '${fromCompName}'` };
+            return { success: false, error: `Unknown component or net '${fromCompName}'` };
         }
 
         const toComp = this.circuit.components.get(toCompName);
         if (!toComp) {
-            return { success: false, error: `Unknown component '${toCompName}'` };
+            return { success: false, error: `Unknown component or net '${toCompName}'` };
         }
 
         if (fromComp === toComp) {
@@ -246,20 +339,20 @@ export class CommandEngine {
         // Find pins using flexible lookup
         const fromPin = this._findPin(fromComp, fromPinName, "output");
         if (!fromPin) {
-            return { success: false, error: `Unknown pin '${fromPinName}' on component '${fromCompName}'` };
+            return { success: false, error: `Unknown pin '${fromPinName || "output"}' on component '${fromCompName}'` };
         }
 
         const toPin = this._findPin(toComp, toPinName, "input");
         if (!toPin) {
-            return { success: false, error: `Unknown pin '${toPinName}' on component '${toCompName}'` };
+            return { success: false, error: `Unknown pin '${toPinName || "input"}' on component '${toCompName}'` };
         }
 
         // Validate directions: FROM must be output, TO must be input
         if (fromPin.type !== "output") {
-            return { success: false, error: `Pin '${fromPinName}' on component '${fromCompName}' is not an output pin` };
+            return { success: false, error: `Pin '${fromPin.name}' on component '${fromCompName}' is not an output pin` };
         }
         if (toPin.type !== "input") {
-            return { success: false, error: `Pin '${toPinName}' on component '${toCompName}' is not an input pin` };
+            return { success: false, error: `Pin '${toPin.name}' on component '${toCompName}' is not an input pin` };
         }
 
         // Remove existing wire to target input pin if it exists
@@ -570,9 +663,13 @@ export class CommandEngine {
      * @param {string} [pinType] - "input" or "output"
      */
     _findPin(comp, pinRef, pinType) {
-        if (!comp || !pinRef) return null;
+        if (!comp) return null;
         const pins = comp.pins().filter(p => !pinType || p.type === pinType);
         if (pins.length === 0) return null;
+
+        if (!pinRef) {
+            return pins[0] || null;
+        }
 
         // 1. Exact match
         let found = pins.find(p => p.name === pinRef);
@@ -598,7 +695,7 @@ export class CommandEngine {
             if (found) return found;
         }
 
-        return null;
+        return pins[0] || null;
     }
 
     /**

@@ -211,9 +211,159 @@ export function synthesizeExpression(circuit, outputName, astNode, engine) {
     const outInPin = findPin(outComp, "D", "input");
     connectPins(circuit, rootRes.pin, outInPin);
 
+    // Run deterministic auto-layout pass
+    applyAutoLayout(circuit);
+
     if (engine) {
         engine.evaluateAll();
     }
 
     return outComp;
+}
+
+/**
+ * Auto-layout components in layered columns:
+ * - Inputs placed on the left (Column 0) sorted alphabetically.
+ * - Intermediate gates placed in topological depth columns (Columns 1..D).
+ * - Outputs placed on the right (Column D+1).
+ * - Barycenter Y-ordering heuristic minimizes wire crossings deterministically.
+ * - All coordinates strictly aligned to 20px grid.
+ */
+export function applyAutoLayout(circuit) {
+    if (!circuit || circuit.components.size === 0) return;
+
+    const comps = Array.from(circuit.components.values());
+    const inputs = comps.filter(c => c.type === "Input");
+    const outputs = comps.filter(c => c.type === "Output");
+    const gates = comps.filter(c => c.type !== "Input" && c.type !== "Output");
+
+    // 1. Calculate topological depth for gates
+    const depthMap = new Map();
+    inputs.forEach(c => depthMap.set(c.id, 0));
+
+    // Multiple passes to resolve depth for all gates
+    let maxDepth = 0;
+    for (let pass = 0; pass < gates.length + 1; pass++) {
+        for (const gate of gates) {
+            let maxSrcDepth = 0;
+            for (const wire of circuit.wires.values()) {
+                if (wire.toPin && wire.toPin.component.id === gate.id && wire.fromPin) {
+                    const srcId = wire.fromPin.component.id;
+                    const srcD = depthMap.get(srcId) || 0;
+                    if (srcD > maxSrcDepth) {
+                        maxSrcDepth = srcD;
+                    }
+                }
+            }
+            const gateD = maxSrcDepth + 1;
+            depthMap.set(gate.id, gateD);
+            if (gateD > maxDepth) {
+                maxDepth = gateD;
+            }
+        }
+    }
+
+    if (maxDepth === 0) maxDepth = 1;
+    outputs.forEach(c => depthMap.set(c.id, maxDepth + 1));
+
+    // 2. Group components into columns
+    const columns = new Map();
+    comps.forEach(comp => {
+        const d = depthMap.get(comp.id) || 0;
+        if (!columns.has(d)) {
+            columns.set(d, []);
+        }
+        columns.get(d).push(comp);
+    });
+
+    const yPosMap = new Map();
+
+    // 3. Layout Column 0 (Inputs)
+    if (columns.has(0)) {
+        const col0 = columns.get(0);
+        col0.sort((a, b) => (a.label || a.id).localeCompare(b.label || b.id));
+        col0.forEach((comp, idx) => {
+            const y = 100 + idx * 80;
+            yPosMap.set(comp.id, y);
+        });
+    }
+
+    // 4. Layout Intermediate Gate Columns (1..maxDepth) using Barycenter heuristic
+    for (let d = 1; d <= maxDepth; d++) {
+        if (!columns.has(d)) continue;
+        const colG = columns.get(d);
+
+        const barycenters = new Map();
+        for (const gate of colG) {
+            let sumY = 0;
+            let count = 0;
+            for (const wire of circuit.wires.values()) {
+                if (wire.toPin && wire.toPin.component.id === gate.id && wire.fromPin) {
+                    const srcId = wire.fromPin.component.id;
+                    if (yPosMap.has(srcId)) {
+                        sumY += yPosMap.get(srcId);
+                        count++;
+                    }
+                }
+            }
+            const bc = count > 0 ? sumY / count : 100;
+            barycenters.set(gate.id, bc);
+        }
+
+        colG.sort((a, b) => {
+            const bcA = barycenters.get(a.id);
+            const bcB = barycenters.get(b.id);
+            if (bcA !== bcB) return bcA - bcB;
+            return a.id.localeCompare(b.id);
+        });
+
+        colG.forEach((gate, idx) => {
+            const y = 100 + idx * 80;
+            yPosMap.set(gate.id, y);
+        });
+    }
+
+    // 5. Layout Output Column (maxDepth + 1)
+    const outDepth = maxDepth + 1;
+    if (columns.has(outDepth)) {
+        const colOut = columns.get(outDepth);
+        const barycenters = new Map();
+        for (const out of colOut) {
+            let sumY = 0;
+            let count = 0;
+            for (const wire of circuit.wires.values()) {
+                if (wire.toPin && wire.toPin.component.id === out.id && wire.fromPin) {
+                    const srcId = wire.fromPin.component.id;
+                    if (yPosMap.has(srcId)) {
+                        sumY += yPosMap.get(srcId);
+                        count++;
+                    }
+                }
+            }
+            const bc = count > 0 ? sumY / count : 100;
+            barycenters.set(out.id, bc);
+        }
+
+        colOut.sort((a, b) => {
+            const bcA = barycenters.get(a.id);
+            const bcB = barycenters.get(b.id);
+            if (bcA !== bcB) return bcA - bcB;
+            return (a.label || a.id).localeCompare(b.label || b.id);
+        });
+
+        colOut.forEach((out, idx) => {
+            const y = 100 + idx * 80;
+            yPosMap.set(out.id, y);
+        });
+    }
+
+    // 6. Apply Grid-Aligned Coordinates
+    comps.forEach(comp => {
+        const d = depthMap.get(comp.id) || 0;
+        const x = 100 + d * 160;
+        const y = yPosMap.get(comp.id) || 100;
+
+        comp.x = Math.round(x / 20) * 20;
+        comp.y = Math.round(y / 20) * 20;
+    });
 }
