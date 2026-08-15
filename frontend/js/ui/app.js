@@ -961,7 +961,7 @@ function loadProjectPayload(name) {
 /**
  * Run Script Dialog Workflow
  */
-function triggerRunScriptDialog(commandEngine) {
+function triggerRunScriptDialog(commandEngine, autoSync = false) {
     const html = `
         <div style="margin-bottom: 12px;">
             <p style="font-size: 13px; color: #ccc; margin-bottom: 8px;">Enter or paste a <code>.sim</code> circuit script:</p>
@@ -969,7 +969,10 @@ function triggerRunScriptDialog(commandEngine) {
             <div id="sim-script-error" style="display: none; margin-top: 8px; padding: 8px 12px; background-color: rgba(231, 76, 60, 0.2); border: 1px solid #e74c3c; border-radius: 4px; color: #ff6b6b; font-size: 12px; font-family: monospace;"></div>
         </div>
         <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
-            <button class="btn btn-secondary" id="btn-load-sim-file"><i class="fa-solid fa-file-arrow-up"></i> Load File...</button>
+            <div style="display: flex; gap: 8px;">
+                <button class="btn btn-secondary" id="btn-load-sim-file"><i class="fa-solid fa-file-arrow-up"></i> Load File...</button>
+                <button class="btn btn-secondary" id="btn-sync-from-canvas"><i class="fa-solid fa-rotate"></i> Sync from Canvas</button>
+            </div>
             <div>
                 <button class="btn btn-secondary" id="btn-run-script-cancel">Cancel</button>
                 <button class="btn btn-primary" id="btn-run-script-exec"><i class="fa-solid fa-play"></i> Execute</button>
@@ -980,9 +983,18 @@ function triggerRunScriptDialog(commandEngine) {
     openModal('<i class="fa-solid fa-code"></i> Run .sim Script', html, () => {
         const textarea = document.getElementById("sim-script-input");
         const errorDiv = document.getElementById("sim-script-error");
+
+        if (autoSync) {
+            textarea.value = commandEngine.exportScript();
+        }
+
         textarea.focus();
 
         document.getElementById("btn-run-script-cancel").addEventListener("click", closeModal);
+
+        document.getElementById("btn-sync-from-canvas").addEventListener("click", () => {
+            textarea.value = commandEngine.exportScript();
+        });
 
         document.getElementById("btn-load-sim-file").addEventListener("click", () => {
             const fileInput = document.createElement("input");
@@ -1194,7 +1206,11 @@ function setupUIEvents(commandEngine) {
     });
 
     document.getElementById("btn-run-script").addEventListener("click", () => {
-        triggerRunScriptDialog(commandEngine);
+        triggerRunScriptDialog(commandEngine, false);
+    });
+
+    document.getElementById("btn-sync-canvas").addEventListener("click", () => {
+        triggerRunScriptDialog(commandEngine, true);
     });
 
     document.getElementById("btn-import-sim").addEventListener("click", () => {

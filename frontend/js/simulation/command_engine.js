@@ -793,27 +793,43 @@ export class CommandEngine {
             "PNP Transistor": "pnp"
         };
 
-        for (const comp of this.circuit.components.values()) {
-            let typeAlias = reverseTypeMap[comp.type];
-            if (!typeAlias) {
-                if (comp.type === "UserModule" && comp.definition) {
-                    typeAlias = comp.definition.name;
-                } else {
-                    typeAlias = comp.type.toLowerCase();
+        // Deterministically sort components by ID
+        const sortedComps = Array.from(this.circuit.components.values())
+            .sort((a, b) => a.id.localeCompare(b.id));
+
+        for (const comp of sortedComps) {
+            const isNet = (comp.type === "Buffer" && comp.label === comp.id);
+            if (isNet) {
+                lines.push(`net ${comp.id}`);
+                lines.push(`move ${comp.id} to (${comp.x},${comp.y})`);
+            } else {
+                let typeAlias = reverseTypeMap[comp.type];
+                if (!typeAlias) {
+                    if (comp.type === "UserModule" && comp.definition) {
+                        typeAlias = comp.definition.name;
+                    } else {
+                        typeAlias = comp.type.toLowerCase();
+                    }
+                }
+
+                lines.push(`add ${typeAlias} ${comp.id}`);
+                lines.push(`move ${comp.id} to (${comp.x},${comp.y})`);
+
+                if (comp.label && comp.label !== comp.id) {
+                    lines.push(`set ${comp.id}.label ${comp.label}`);
                 }
             }
 
-            lines.push(`add ${typeAlias} ${comp.id}`);
-            lines.push(`move ${comp.id} to (${comp.x},${comp.y})`);
-
-            if (comp.label) {
-                lines.push(`set ${comp.id}.label ${comp.label}`);
-            }
-
+            // Properties
             if (comp.type === "Clock" && comp.frequencyValue !== undefined) {
                 lines.push(`set ${comp.id}.freq ${comp.frequencyValue}${comp.frequencyUnit || "Hz"}`);
-            } else if (comp.type === "Button" && comp.buttonMode) {
-                lines.push(`set ${comp.id}.buttonMode ${comp.buttonMode}`);
+            } else if (comp.type === "Button") {
+                if (comp.buttonMode) {
+                    lines.push(`set ${comp.id}.buttonMode ${comp.buttonMode}`);
+                }
+                if (comp.holdDuration !== undefined) {
+                    lines.push(`set ${comp.id}.holdDuration ${comp.holdDuration}`);
+                }
             } else if (comp.type === "LED" && comp.ledColor) {
                 lines.push(`set ${comp.id}.ledColor ${comp.ledColor}`);
                 if (comp.ledColor === "RGBA" && comp.rgbaValue) {
@@ -832,10 +848,17 @@ export class CommandEngine {
             }
         }
 
-        for (const wire of this.circuit.wires.values()) {
-            if (wire.fromPin && wire.toPin) {
-                lines.push(`connect ${wire.fromPin.component.id}.${wire.fromPin.name} ${wire.toPin.component.id}.${wire.toPin.name}`);
-            }
+        // Deterministically sort wires
+        const sortedWires = Array.from(this.circuit.wires.values())
+            .filter(w => w.fromPin && w.toPin && w.fromPin.component && w.toPin.component)
+            .sort((a, b) => {
+                const keyA = `${a.fromPin.component.id}.${a.fromPin.name}->${a.toPin.component.id}.${a.toPin.name}`;
+                const keyB = `${b.fromPin.component.id}.${b.fromPin.name}->${b.toPin.component.id}.${b.toPin.name}`;
+                return keyA.localeCompare(keyB);
+            });
+
+        for (const wire of sortedWires) {
+            lines.push(`connect ${wire.fromPin.component.id}.${wire.fromPin.name} ${wire.toPin.component.id}.${wire.toPin.name}`);
         }
 
         return lines.join("\n");
