@@ -212,12 +212,44 @@ export class Component {
     }
 }
 
+export class Bus {
+    /**
+     * @param {string} name - e.g. "A"
+     * @param {number} start - e.g. 0
+     * @param {number} end - e.g. 15
+     */
+    constructor(name, start, end) {
+        this.name = name;
+        this.start = start;
+        this.end = end;
+        this.width = Math.abs(end - start) + 1;
+        this.isDescending = start > end;
+
+        this.indices = [];
+        this.members = [];
+
+        if (!this.isDescending) {
+            for (let i = start; i <= end; i++) {
+                this.indices.push(i);
+                this.members.push(`${name}[${i}]`);
+            }
+        } else {
+            for (let i = start; i >= end; i--) {
+                this.indices.push(i);
+                this.members.push(`${name}[${i}]`);
+            }
+        }
+    }
+}
+
 export class Circuit {
     constructor() {
         /** @type {Map<string, Component>} */
         this.components = new Map();
         /** @type {Map<string, Wire>} */
         this.wires = new Map();
+        /** @type {Map<string, Bus>} */
+        this.buses = new Map();
     }
 
     addComponent(comp) {
@@ -246,8 +278,17 @@ export class Circuit {
         this.wires.delete(id);
     }
 
+    addBus(bus) {
+        this.buses.set(bus.name, bus);
+    }
+
+    removeBus(name) {
+        this.buses.delete(name);
+    }
+
     clear() {
         this.components.clear();
         this.wires.clear();
+        this.buses.clear();
     }
 }

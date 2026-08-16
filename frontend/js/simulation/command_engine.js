@@ -1,5 +1,5 @@
 import { createComponent, COMPONENT_REGISTRY } from "./components.js";
-import { Wire } from "./core.js";
+import { Wire, Bus } from "./core.js";
 import { UserModule } from "./modules.js";
 import { serializeCircuit, deserializeCircuit } from "./serialization.js";
 import { parseBooleanExpression } from "./expr_parser.js";
@@ -75,7 +75,12 @@ export class CommandEngine {
 
         const cmd = parts[0].toLowerCase();
 
-        // Handle bus range expansion (e.g. IN[0..3])
+        // Handle bus declaration command: bus NAME[START..END]
+        if (cmd === "bus") {
+            return this._handleBus(parts, trimmed);
+        }
+
+        // Handle bus range expansion in other commands (e.g. connect IN[0..3] OUT[0..3])
         if (trimmed.includes("..")) {
             try {
                 const expanded = this._expandBusCommand(trimmed);
@@ -123,6 +128,48 @@ export class CommandEngine {
         }
     }
 
+    _handleBus(parts, original) {
+        // Syntax: bus NAME[START..END]
+        if (parts.length < 2) {
+            return { success: false, error: "Syntax: bus NAME[START..END]" };
+        }
+
+        const busDecl = parts[1];
+        const match = busDecl.match(/^([a-zA-Z][a-zA-Z0-9_]*)\[(\d+)\.\.(\d+)\]$/);
+        if (!match) {
+            return { success: false, error: `Invalid bus declaration format '${busDecl}', expected NAME[START..END]` };
+        }
+
+        const busName = match[1];
+        const start = parseInt(match[2], 10);
+        const end = parseInt(match[3], 10);
+
+        if (this.circuit.buses.has(busName)) {
+            const existing = this.circuit.buses.get(busName);
+            if (existing.start === start && existing.end === end) {
+                return { success: true, message: `Bus '${busName}' already defined` };
+            }
+            return { success: false, error: `Bus '${busName}' already exists with a different range` };
+        }
+
+        if (this.circuit.components.has(busName)) {
+            return { success: false, error: `Cannot declare bus '${busName}': scalar component with name '${busName}' already exists` };
+        }
+
+        const bus = new Bus(busName, start, end);
+        this.circuit.addBus(bus);
+
+        // Ensure member net signals exist for logical routing
+        for (const memberName of bus.members) {
+            if (!this.circuit.components.has(memberName)) {
+                this._handleNet(["net", memberName], `net ${memberName}`);
+            }
+        }
+
+        this._saveHistory();
+        return { success: true, message: `Successfully declared ${bus.width}-bit bus '${busName}[${start}..${end}]'` };
+    }
+
     _expandBusCommand(commandStr) {
         const rangeRegex = /([a-zA-Z][a-zA-Z0-9_]*)\[(\d+)\.\.(\d+)\]/g;
         const matches = Array.from(commandStr.matchAll(rangeRegex));
@@ -134,6 +181,14 @@ export class CommandEngine {
         const firstStart = parseInt(matches[0][2], 10);
         const firstEnd = parseInt(matches[0][3], 10);
         const count = Math.abs(firstEnd - firstStart) + 1;
+
+        if (matches.length >= 2) {
+            const len1 = Math.abs(parseInt(matches[0][3], 10) - parseInt(matches[0][2], 10)) + 1;
+            const len2 = Math.abs(parseInt(matches[1][3], 10) - parseInt(matches[1][2], 10)) + 1;
+            if (len1 !== len2) {
+                throw new Error(`Cannot connect ${matches[0][1]} to ${matches[1][1]}: source width = ${len1}, destination width = ${len2}`);
+            }
+        }
 
         for (const m of matches) {
             const s = parseInt(m[2], 10);
@@ -323,6 +378,39 @@ export class CommandEngine {
             const lastIdx = toRef.lastIndexOf(".");
             toCompName = toRef.substring(0, lastIdx);
             toPinName = toRef.substring(lastIdx + 1);
+        }
+
+        // Check if both FROM and TO refer to registered buses
+        const fromBus = this.circuit.buses.get(fromCompName);
+        const toBus = this.circuit.buses.get(toCompName);
+
+        if (fromBus || toBus) {
+            if (fromBus && toBus) {
+                if (fromBus.width !== toBus.width) {
+                    return {
+                        success: false,
+                        error: `Cannot connect ${fromBus.name} to ${toBus.name}: source width = ${fromBus.width}, destination width = ${toBus.width}`
+                    };
+                }
+                // Connect bus member bits pairwise based on declared bus indices
+                let lastRes = { success: true, message: `Successfully connected bus ${fromBus.name} to ${toBus.name}` };
+                for (let i = 0; i < fromBus.width; i++) {
+                    const memberFrom = fromBus.members[i];
+                    const memberTo = toBus.members[i];
+                    const res = this.execute(`connect ${memberFrom} ${memberTo}`);
+                    if (!res.success) return res;
+                    lastRes = res;
+                }
+                return lastRes;
+            } else {
+                const busObj = fromBus || toBus;
+                const srcW = fromBus ? fromBus.width : 1;
+                const dstW = toBus ? toBus.width : 1;
+                return {
+                    success: false,
+                    error: `Cannot connect ${fromRef} to ${toRef}: source width = ${srcW}, destination width = ${dstW}`
+                };
+            }
         }
 
         const fromComp = this.circuit.components.get(fromCompName);
@@ -519,6 +607,13 @@ export class CommandEngine {
     }
 
     _handleList() {
+        const busesOutput = [];
+        if (this.circuit.buses) {
+            for (const bus of this.circuit.buses.values()) {
+                busesOutput.push(`  - ${bus.name} [${bus.start}..${bus.end}] (width: ${bus.width})`);
+            }
+        }
+
         const comps = [];
         for (const comp of this.circuit.components.values()) {
             let details = "";
@@ -538,6 +633,8 @@ export class CommandEngine {
         }
 
         const output = [
+            "Buses:",
+            busesOutput.length > 0 ? busesOutput.join("\n") : "  (none)",
             "Components:",
             comps.length > 0 ? comps.join("\n") : "  (none)",
             "Wires:",
@@ -554,9 +651,25 @@ export class CommandEngine {
         }
 
         const name = parts[1];
+
+        // Check if name is a bus
+        if (this.circuit.buses.has(name)) {
+            const bus = this.circuit.buses.get(name);
+            const props = [
+                `Bus: ${bus.name}`,
+                `Width: ${bus.width}`,
+                `Range: ${bus.start}..${bus.end}`,
+                `Direction: ${bus.isDescending ? "descending" : "ascending"}`,
+                `Bits:`,
+                ...bus.members.map(m => `  - ${m}`)
+            ];
+            const output = props.join("\n");
+            return { success: true, data: output, message: output };
+        }
+
         const comp = this.circuit.components.get(name);
         if (!comp) {
-            return { success: false, error: `Unknown component '${name}'` };
+            return { success: false, error: `Unknown component or bus '${name}'` };
         }
 
         const props = [
@@ -768,6 +881,13 @@ export class CommandEngine {
      */
     exportScript() {
         const lines = ["# Circuit exported to .sim format"];
+
+        // Export buses
+        if (this.circuit.buses) {
+            for (const bus of this.circuit.buses.values()) {
+                lines.push(`bus ${bus.name}[${bus.start}..${bus.end}]`);
+            }
+        }
 
         const reverseTypeMap = {
             "Input": "input",

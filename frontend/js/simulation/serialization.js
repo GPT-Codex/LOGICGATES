@@ -2,7 +2,7 @@
  * Handles JSON serialization and deserialization of projects, libraries, and custom modules.
  */
 
-import { Circuit, Wire } from "./core.js";
+import { Circuit, Wire, Bus } from "./core.js";
 import { createComponent } from "./components.js";
 import { UserModule, ModuleDefinition } from "./modules.js";
 
@@ -85,6 +85,17 @@ export function serializeCircuit(circuit, registry) {
         });
     }
 
+    const buses = [];
+    if (circuit.buses) {
+        for (const bus of circuit.buses.values()) {
+            buses.push({
+                name: bus.name,
+                start: bus.start,
+                end: bus.end
+            });
+        }
+    }
+
     // Include registered user module definitions so projects load self-contained!
     const definitions = [];
     if (registry) {
@@ -107,6 +118,7 @@ export function serializeCircuit(circuit, registry) {
     return {
         components,
         wires,
+        buses,
         definitions
     };
 }
@@ -213,7 +225,15 @@ export function deserializeCircuit(data, circuit, registry) {
         });
     }
 
-    // 3. Rebuild wires
+    // 3. Rebuild buses
+    if (data.buses && Array.isArray(data.buses)) {
+        for (const busData of data.buses) {
+            const bus = new Bus(busData.name, busData.start, busData.end);
+            circuit.addBus(bus);
+        }
+    }
+
+    // 4. Rebuild wires
     for (const wireData of data.wires) {
         const fromPin = pinMap.get(wireData.fromPin);
         const toPin = pinMap.get(wireData.toPin);
