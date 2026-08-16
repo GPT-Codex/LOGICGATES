@@ -3,11 +3,16 @@
  * Supports:
  * - Simple for loops: `for VAR in START..END { ... }`
  * - Descending and ascending ranges: `0..7`, `7..0`
+ * - Module blocks: `module Name { ... }`
  * - Simple integer arithmetic in indices, coordinates, and math expressions
  * - Nested loops with local scoping
  * - Safety execution limits (nesting depth, total iterations, expanded commands)
  * - Line number and loop iteration tracking for error reporting
  */
+
+import { Circuit, Wire, Bus } from "./core.js";
+import { ModuleDefinition } from "./modules.js";
+import { serializeCircuit, findDefinitionByNameAndType } from "./serialization.js";
 
 const MAX_NESTING_DEPTH = 5;
 const MAX_TOTAL_ITERATIONS = 100000;
@@ -272,6 +277,51 @@ export function expandScript(scriptText) {
                 return lineIdx; // End of block
             }
 
+            // Check for module definition block: `module ModuleName {`
+            const moduleMatch = trimmed.match(/^module\s+(.+?)\s*\{$/i);
+            if (moduleMatch && depth === 0) {
+                const moduleName = moduleMatch[1];
+                const moduleStartLine = lineNum;
+                const moduleBodyLines = [];
+
+                let blockDepth = 1;
+                let bodyEndLine = lineIdx + 1;
+                while (bodyEndLine < rawLines.length && blockDepth > 0) {
+                    let bodyRaw = rawLines[bodyEndLine];
+                    const cIdx = bodyRaw.indexOf("#");
+                    if (cIdx !== -1) bodyRaw = bodyRaw.substring(0, cIdx);
+                    const bTrim = bodyRaw.trim();
+
+                    if ((bTrim.startsWith("for ") || bTrim.startsWith("module ")) && bTrim.endsWith("{")) {
+                        blockDepth++;
+                    } else if (bTrim === "}") {
+                        blockDepth--;
+                    }
+
+                    if (blockDepth > 0) {
+                        moduleBodyLines.push(rawLines[bodyEndLine]);
+                        bodyEndLine++;
+                    }
+                }
+
+                if (blockDepth !== 0) {
+                    throw new Error(`Unclosed 'module' block starting at line ${moduleStartLine}`);
+                }
+
+                expandedList.push({
+                    line: moduleStartLine,
+                    command: `__MODULE_DEF__ ${moduleName}`,
+                    moduleDef: {
+                        name: moduleName,
+                        startLine: moduleStartLine,
+                        rawBodyText: moduleBodyLines.join("\n")
+                    }
+                });
+
+                lineIdx = bodyEndLine + 1;
+                continue;
+            }
+
             // Check for loop statement: `for VAR in RANGE {`
             const forMatch = trimmed.match(/^for\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+in\s+([^\s\{]+)\s*\{$/i);
             if (forMatch) {
@@ -350,4 +400,206 @@ export function expandScript(scriptText) {
     processBlock(0, {}, 0, []);
 
     return expandedList;
+}
+
+/**
+ * Check if targetModule appears anywhere in the dependency hierarchy of testDef.
+ * @param {ModuleDefinition} testDef
+ * @param {string} targetModuleName
+ * @param {ModuleRegistry} registry
+ * @param {Set<string>} visited
+ * @returns {boolean}
+ */
+function hasDependencyCycle(testDef, targetModuleName, registry, visited = new Set()) {
+    if (!testDef) return false;
+    if (visited.has(testDef.id)) return false;
+    visited.add(testDef.id);
+
+    if (testDef.name.toLowerCase() === targetModuleName.toLowerCase()) {
+        return true;
+    }
+
+    for (const compData of testDef.components || []) {
+        if (compData.type === "UserModule" && compData.definitionId) {
+            const childDef = registry ? registry.get(compData.definitionId) : null;
+            if (childDef) {
+                if (childDef.name.toLowerCase() === targetModuleName.toLowerCase()) {
+                    return true;
+                }
+                if (hasDependencyCycle(childDef, targetModuleName, registry, visited)) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Compile a scripted module definition into a ModuleDefinition instance.
+ * @param {string} moduleName
+ * @param {string} rawBodyText
+ * @param {number} startLine
+ * @param {ModuleRegistry} registry
+ * @param {typeof CommandEngine} CommandEngineClass
+ * @param {typeof SimulationEngine} SimulationEngineClass
+ * @returns {ModuleDefinition}
+ */
+export function compileModuleDefinition(moduleName, rawBodyText, startLine, registry, CommandEngineClass, SimulationEngineClass) {
+    // 1. Expand script inside module body
+    let bodyCommands;
+    try {
+        bodyCommands = expandScript(rawBodyText);
+    } catch (e) {
+        throw new Error(`Module ${moduleName}:\nLine ${startLine}:\n${e.message}`);
+    }
+
+    // Temporary circuit graph for compiling and validating the internal module subcircuit
+    const tempCircuit = new Circuit();
+    const tempEngine = SimulationEngineClass ? new SimulationEngineClass(tempCircuit) : null;
+    const tempCmdEngine = new CommandEngineClass(tempCircuit, registry, null, tempEngine);
+
+    const inputsSet = new Set();
+    const outputsSet = new Set();
+    const inputNames = [];
+    const outputNames = [];
+
+    // Process body commands
+    for (const item of bodyCommands) {
+        const lineNum = startLine + item.line;
+        const cmdStr = item.command.trim();
+        const parts = cmdStr.split(/\s+/);
+        if (parts.length === 0 || !parts[0]) continue;
+
+        const verb = parts[0].toLowerCase();
+
+        // 2. Handle port declarations: `input NAME` or `input NAME[START..END]`
+        if (verb === "input" || verb === "output") {
+            if (parts.length < 2) {
+                throw new Error(`Module ${moduleName}:\nLine ${lineNum}:\nSyntax: ${verb} NAME or ${verb} NAME[START..END]`);
+            }
+
+            const portDecl = parts[1];
+            const isInput = verb === "input";
+            const targetSet = isInput ? inputsSet : outputsSet;
+            const targetList = isInput ? inputNames : outputNames;
+
+            // Check if vector port: NAME[START..END]
+            const busMatch = portDecl.match(/^([a-zA-Z][a-zA-Z0-9_]*)\[(\d+)\.\.(\d+)\]$/);
+            if (busMatch) {
+                const portName = busMatch[1];
+                const start = parseInt(busMatch[2], 10);
+                const end = parseInt(busMatch[3], 10);
+
+                const bus = new Bus(portName, start, end);
+                tempCircuit.addBus(bus);
+
+                for (const member of bus.members) {
+                    if (inputsSet.has(member) || outputsSet.has(member)) {
+                        throw new Error(`Module ${moduleName}:\nLine ${lineNum}:\nDuplicate port declaration '${member}'`);
+                    }
+                    targetSet.add(member);
+                    targetList.push(member);
+
+                    // Add gate to temporary circuit
+                    const addRes = tempCmdEngine.execute(`add ${verb} ${member}`);
+                    if (!addRes.success) {
+                        throw new Error(`Module ${moduleName}:\nLine ${lineNum}:\n${addRes.error}`);
+                    }
+                }
+            } else {
+                const portName = portDecl;
+                if (!/^[a-zA-Z][a-zA-Z0-9_]*(\[\d+\])*$/.test(portName)) {
+                    throw new Error(`Module ${moduleName}:\nLine ${lineNum}:\nInvalid ${verb} pin name '${portName}'`);
+                }
+
+                if (inputsSet.has(portName) || outputsSet.has(portName)) {
+                    throw new Error(`Module ${moduleName}:\nLine ${lineNum}:\nDuplicate port declaration '${portName}'`);
+                }
+
+                targetSet.add(portName);
+                targetList.push(portName);
+
+                const addRes = tempCmdEngine.execute(`add ${verb} ${portName}`);
+                if (!addRes.success) {
+                    throw new Error(`Module ${moduleName}:\nLine ${lineNum}:\n${addRes.error}`);
+                }
+            }
+            continue;
+        }
+
+        // 3. Handle internal component addition & check recursive instantiation
+        if (verb === "add") {
+            const rawTypeStr = parts.slice(1, -1).join(" ").trim();
+            if (rawTypeStr.toLowerCase() === moduleName.toLowerCase()) {
+                throw new Error(`Module ${moduleName}:\nLine ${lineNum}:\nCannot instantiate module '${moduleName}' recursively`);
+            }
+
+            // Check indirect recursion
+            if (registry) {
+                for (const existingDef of registry.definitions.values()) {
+                    if (existingDef.name.toLowerCase() === rawTypeStr.toLowerCase()) {
+                        if (hasDependencyCycle(existingDef, moduleName, registry)) {
+                            throw new Error(`Module ${moduleName}:\nLine ${lineNum}:\nRecursive module dependency detected involving '${existingDef.name}'`);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Execute internal command
+        const execRes = tempCmdEngine.execute(cmdStr);
+        if (!execRes.success) {
+            const ctxStr = item.loopContext ? `${item.loopContext}\n` : "";
+            throw new Error(`Module ${moduleName}:\nLine ${lineNum}:\n${ctxStr}${execRes.error}`);
+        }
+    }
+
+    // 4. Validate output drivers if internal logic gates exist
+    const hasInternalGates = Array.from(tempCircuit.components.values()).some(
+        c => c.type !== "Input" && c.type !== "Output"
+    );
+
+    if (hasInternalGates) {
+        for (const outName of outputNames) {
+            const outComp = tempCircuit.components.get(outName);
+            if (outComp && outComp.type === "Output") {
+                const inPin = outComp.inputs[0];
+                let isDriven = false;
+                for (const wire of tempCircuit.wires.values()) {
+                    if (wire.toPin === inPin) {
+                        isDriven = true;
+                        break;
+                    }
+                }
+                if (!isDriven) {
+                    throw new Error(`Module ${moduleName}:\nDeclared output '${outName}' has no driver`);
+                }
+            }
+        }
+    }
+
+    // 5. Serialize internal circuit
+    const serialized = serializeCircuit(tempCircuit, registry);
+
+    const sortedInputs = inputNames;
+    const sortedOutputs = outputNames;
+
+    const modId = `mod_${moduleName.toLowerCase().replace(/[^a-z0-9_]/g, "_")}`;
+
+    const def = new ModuleDefinition(
+        modId,
+        moduleName,
+        `Script-defined module ${moduleName}`,
+        "Custom",
+        sortedInputs,
+        sortedOutputs,
+        serialized.components,
+        serialized.wires,
+        "Module",
+        "Custom"
+    );
+
+    return def;
 }

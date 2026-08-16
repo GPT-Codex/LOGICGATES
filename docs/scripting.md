@@ -13,16 +13,63 @@ The `.sim` circuit scripting language allows you to create, modify, connect, and
 | `connect` | `connect FROM TO` / `connect FROM -> TO` | Connect output pin `FROM` to input pin `TO`. |
 | `set` | `set NAME.PROP VALUE` | Modify component properties (`label`, `freq`, `buttonMode`, `rotation`, `flipX`, `flipY`, etc.). |
 | `remove` | `remove NAME` | Delete component `NAME` and automatically detach connected wires. |
-| `show` | `show NAME` | Display detailed inspection metadata for a component or bus. |
+| `show` | `show NAME` / `show module NAME` | Display detailed inspection metadata for a component, bus, or module. |
 | `list` | `list` | List all components, buses, and wires in the active circuit. |
 | `net` | `net NAME` | Create a net signal node (buffer pass-through). |
 | `bus` | `bus NAME[START..END]` | Declare a first-class $N$-bit bus vector. |
 | `expr` | `expr OUTPUT = BOOLEAN_EXPRESSION` | Synthesize a boolean expression into gates and wires. |
 | `for` | `for VAR in START..END { ... }` | Loop over an inclusive numerical range. |
+| `module` | `module NAME { ... }` | Define a reusable, compiled subcircuit module. |
 
 ---
 
-## 2. Component Types
+## 2. Reusable Scripted Modules (`module`)
+
+Define reusable circuit components using the `module` block:
+
+```text
+module FullAdder {
+    input A
+    input B
+    input Cin
+
+    output S
+    output Cout
+
+    expr S = (A XOR B) XOR Cin
+    expr Cout = (A AND B) OR (A AND Cin) OR (B AND Cin)
+}
+```
+
+### Module Ports (`input` and `output`)
+External module pins are declared using `input NAME` and `output NAME`:
+- Port names are exact, case-sensitive, and unique.
+- Vector ports can be declared with range syntax: `input A[0..3]` or `output S[0..3]`.
+
+### Module Body
+The module body uses the existing scripting language (`add`, `move`, `connect`, `expr`, `for`, `bus`).
+When compiled, the subcircuit is validated for valid drivers, port connections, and dependency cycles.
+
+### Restrictions
+- Direct recursion (`add FullAdder FA` inside `FullAdder`) and indirect circular module dependencies are rejected.
+- Compilation errors identify the module name and failing line number.
+- Scripted modules are integrated with the visual Custom Parts library and can be placed, moved, flipped, saved, and loaded.
+
+### Module Instantiation & Pin Identity
+Instantiate defined modules with `add`:
+```text
+add FullAdder FA0
+add FullAdder FA1
+
+connect A -> FA0.A
+connect B -> FA0.B
+connect Cin -> FA0.Cin
+```
+Pin identity (e.g. `FA0.A`, `FA0.S`) is logical and persistent regardless of visual rendering, position, or horizontal/vertical flipping.
+
+---
+
+## 3. Component Types
 
 Supported built-in component types:
 - `input` (Interactive Input Switch)
@@ -38,11 +85,11 @@ Supported built-in component types:
 - `npn` / `pnp` (Transistor Switches)
 - `led`
 - `7-segment display` / `10-segment display`
-- Custom Module Names (e.g. `HalfAdder`, `FullAdder`)
+- Custom & Scripted Module Names (e.g. `HalfAdder`, `FullAdder`, `RippleAdder4`)
 
 ---
 
-## 3. Position & Geometry
+## 4. Position & Geometry
 
 All coordinates on the canvas use a 20px grid system. Explicitly positioned components using `move NAME to (X, Y)` are marked as position-locked anchors (`isExplicitPosition = true`) and will **not** be moved or rearranged during subsequent boolean expression synthesis (`expr`).
 
@@ -62,7 +109,7 @@ expr S = A XOR B
 
 ---
 
-## 4. Indexed Identifiers & Ranges
+## 5. Indexed Identifiers & Ranges
 
 Component and signal identifiers support multi-dimensional array indexing:
 - `A[0]`, `A[1]`, `G[0][1]`
@@ -78,7 +125,7 @@ for i in 0..7 {
 
 ---
 
-## 5. First-Class Buses & Vector Operations
+## 6. First-Class Buses & Vector Operations
 
 Declare buses with `bus NAME[START..END]`:
 ```text
@@ -86,7 +133,7 @@ bus A[0..15]
 bus B[0..15]
 ```
 
-Vector connections automatically map corresponding index bits pairwise between compatible buses:
+Vector connections automatically map corresponding index bits pairwise between compatible buses or module vector ports:
 ```text
 connect A B
 ```
@@ -99,7 +146,7 @@ connect A[0..7] B[0..7]
 
 ---
 
-## 6. Boolean Expression Synthesis
+## 7. Boolean Expression Synthesis
 
 Synthesize expressions directly into gates and wires using `expr`:
 ```text
@@ -124,7 +171,7 @@ This is rejected with a clear error: `Cannot define 'A' because it is referenced
 
 ---
 
-## 7. Comments & Error Reporting
+## 8. Comments & Error Reporting
 
 Lines or suffixes starting with `#` are treated as comments:
 ```text
@@ -141,7 +188,7 @@ Unknown pin 'INVALID' on component 'G[2]'
 
 ---
 
-## 8. Complete Working Examples
+## 9. Complete Working Examples
 
 ### 1. Half Adder
 ```text
@@ -166,66 +213,93 @@ expr Sum = A XOR B
 expr Carry = A AND B
 ```
 
-### 2. Full Adder
+### 2. Full Adder Module Definition & Instantiation
 ```text
-# Full Adder Script
+# 1. Define reusable FullAdder module
+module FullAdder {
+    input A
+    input B
+    input Cin
+
+    output S
+    output Cout
+
+    expr S = (A XOR B) XOR Cin
+    expr Cout = (A AND B) OR (A AND Cin) OR (B AND Cin)
+}
+
+# 2. Instantiate and wire Full Adder in main circuit
 add input A
 move A to (0, 100)
-set A.label A
 
 add input B
 move B to (0, 180)
-set B.label B
 
 add input Cin
 move Cin to (0, 260)
-set Cin.label Cin
+
+add FullAdder FA0
+move FA0 to (300, 180)
 
 add output S
-move S to (600, 100)
-set S.label S
+move S to (600, 140)
 
 add output Cout
-move Cout to (600, 180)
-set Cout.label Cout
+move Cout to (600, 220)
 
-expr S = A XOR B XOR Cin
-expr Cout = (A AND B) OR (A AND Cin) OR (B AND Cin)
+connect A FA0.A
+connect B FA0.B
+connect Cin FA0.Cin
+connect FA0.S S
+connect FA0.Cout Cout
 ```
 
-### 3. 4-Bit Ripple-Carry Adder
+### 3. 4-Bit Ripple-Carry Adder Using FullAdder Modules & Loops
 ```text
-# 4-Bit Ripple-Carry Adder
-bus A[0..3]
-bus B[0..3]
-bus SUM[0..3]
+# 1. Define FullAdder module
+module FullAdder {
+    input A
+    input B
+    input Cin
 
+    output S
+    output Cout
+
+    expr S = (A XOR B) XOR Cin
+    expr Cout = (A AND B) OR (A AND Cin) OR (B AND Cin)
+}
+
+# 2. Build 4-Bit Adder using FullAdder instances
 add input Cin
 move Cin to (0, 0)
 
 for i in 0..3 {
     add input A[i]
-    move A[i] to (0, i * 80 + 100)
+    move A[i] to (0, i * 100 + 80)
+
     add input B[i]
-    move B[i] to (0, i * 80 + 140)
-    add output SUM[i]
-    move SUM[i] to (800, i * 80 + 120)
+    move B[i] to (0, i * 100 + 120)
+
+    add FullAdder FA[i]
+    move FA[i] to (350, i * 100 + 100)
+
+    add output S[i]
+    move S[i] to (700, i * 100 + 100)
+
+    connect A[i] FA[i].A
+    connect B[i] FA[i].B
+    connect FA[i].S S[i]
 }
 
 add output Cout
-move Cout to (800, 450)
+move Cout to (700, 480)
 
-# Bit 0
-expr SUM[0] = A[0] XOR B[0] XOR Cin
-expr C[0] = (A[0] AND B[0]) OR (A[0] AND Cin) OR (B[0] AND Cin)
-
-# Bits 1..3
+# Connect carry chain
+connect Cin FA[0].Cin
 for i in 1..3 {
-    expr SUM[i] = A[i] XOR B[i] XOR C[i - 1]
-    expr C[i] = (A[i] AND B[i]) OR (A[i] AND C[i - 1]) OR (B[i] AND C[i - 1])
+    connect FA[i - 1].Cout FA[i].Cin
 }
-
-connect C[3] Cout
+connect FA[3].Cout Cout
 ```
 
 ### 4. 8-Bit Ripple-Carry Adder
@@ -265,19 +339,21 @@ connect C[7] Cout
 
 ### 5. Vector Bus Example
 ```text
-# First-Class Vector Bus Example
-bus IN_BUS[0..7]
-bus OUT_BUS[0..7]
+module Buffer8 {
+    input A[0..7]
+    output O[0..7]
 
-for i in 0..7 {
-    add input IN[i]
-    move IN[i] to (0, i * 40)
-    add output OUT[i]
-    move OUT[i] to (600, i * 40)
-    connect IN[i] IN_BUS[i]
-    connect OUT_BUS[i] OUT[i]
+    for i in 0..7 {
+        expr O[i] = A[i]
+    }
 }
 
-# Connect entire 8-bit bus with one command
-connect IN_BUS OUT_BUS
+bus IN[0..7]
+bus OUT[0..7]
+
+add Buffer8 BUF0
+move BUF0 to (300, 200)
+
+connect IN BUF0.A
+connect BUF0.O OUT
 ```

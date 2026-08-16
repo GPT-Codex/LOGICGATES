@@ -1,10 +1,12 @@
 import { createComponent, COMPONENT_REGISTRY } from "./components.js";
-import { Wire, Bus } from "./core.js";
+import { Circuit, Wire, Bus } from "./core.js";
 import { UserModule } from "./modules.js";
 import { serializeCircuit, deserializeCircuit } from "./serialization.js";
 import { parseBooleanExpression } from "./expr_parser.js";
 import { synthesizeExpression } from "./expr_synthesizer.js";
-import { expandScript } from "./script_parser.js";
+import { expandScript, compileModuleDefinition } from "./script_parser.js";
+import { SimulationEngine } from "./simulation_engine.js";
+import { findDefinitionByNameAndType } from "./serialization.js";
 
 /**
  * Parses and executes circuit graph commands.
@@ -94,6 +96,16 @@ export class CommandEngine {
             } catch (e) {
                 return { success: false, error: e.message };
             }
+        }
+
+        // Handle special internal module definition token
+        if (cmd === "__module_def__" && parts.length >= 2) {
+            return { success: true, message: `Module ${parts[1]} definition block` };
+        }
+
+        // Handle show module command: show module ModuleName
+        if (cmd === "show" && parts.length >= 3 && parts[1].toLowerCase() === "module") {
+            return this._handleShowModule(parts[2]);
         }
 
         try {
@@ -380,37 +392,28 @@ export class CommandEngine {
             toPinName = toRef.substring(lastIdx + 1);
         }
 
-        // Check if both FROM and TO refer to registered buses
-        const fromBus = this.circuit.buses.get(fromCompName);
-        const toBus = this.circuit.buses.get(toCompName);
+        // Resolve vector pin references (buses or vector ports on components)
+        const fromVector = this._getVectorPinRefs(fromCompName, fromPinName, "output");
+        const toVector = this._getVectorPinRefs(toCompName, toPinName, "input");
 
-        if (fromBus || toBus) {
-            if (fromBus && toBus) {
-                if (fromBus.width !== toBus.width) {
-                    return {
-                        success: false,
-                        error: `Cannot connect ${fromBus.name} to ${toBus.name}: source width = ${fromBus.width}, destination width = ${toBus.width}`
-                    };
-                }
-                // Connect bus member bits pairwise based on declared bus indices
-                let lastRes = { success: true, message: `Successfully connected bus ${fromBus.name} to ${toBus.name}` };
-                for (let i = 0; i < fromBus.width; i++) {
-                    const memberFrom = fromBus.members[i];
-                    const memberTo = toBus.members[i];
-                    const res = this.execute(`connect ${memberFrom} ${memberTo}`);
-                    if (!res.success) return res;
-                    lastRes = res;
-                }
-                return lastRes;
-            } else {
-                const busObj = fromBus || toBus;
-                const srcW = fromBus ? fromBus.width : 1;
-                const dstW = toBus ? toBus.width : 1;
+        if (fromVector || toVector) {
+            const srcList = fromVector || [fromRef];
+            const dstList = toVector || [toRef];
+
+            if (srcList.length !== dstList.length) {
                 return {
                     success: false,
-                    error: `Cannot connect ${fromRef} to ${toRef}: source width = ${srcW}, destination width = ${dstW}`
+                    error: `Cannot connect ${fromRef} to ${toRef}: source width = ${srcList.length}, destination width = ${dstList.length}`
                 };
             }
+
+            let lastRes = { success: true, message: `Successfully connected ${fromRef} to ${toRef}` };
+            for (let i = 0; i < srcList.length; i++) {
+                const res = this.execute(`connect ${srcList[i]} ${dstList[i]}`);
+                if (!res.success) return res;
+                lastRes = res;
+            }
+            return lastRes;
         }
 
         const fromComp = this.circuit.components.get(fromCompName);
@@ -644,6 +647,40 @@ export class CommandEngine {
         return { success: true, data: output, message: output };
     }
 
+    _handleShowModule(moduleName) {
+        if (!this.registry) {
+            return { success: false, error: "ModuleRegistry not available" };
+        }
+
+        let foundDef = null;
+        for (const def of this.registry.definitions.values()) {
+            if (def.id.toLowerCase() === moduleName.toLowerCase() || def.name.toLowerCase() === moduleName.toLowerCase()) {
+                foundDef = def;
+                break;
+            }
+        }
+
+        if (!foundDef) {
+            return { success: false, error: `Unknown module '${moduleName}'` };
+        }
+
+        const lines = [
+            `Module: ${foundDef.name}`,
+            "",
+            "Inputs:",
+            ...(foundDef.inputs.length > 0 ? foundDef.inputs.map(i => `  - ${i}`) : ["  (none)"]),
+            "",
+            "Outputs:",
+            ...(foundDef.outputs.length > 0 ? foundDef.outputs.map(o => `  - ${o}`) : ["  (none)"]),
+            "",
+            "Internal components:",
+            ...(foundDef.components.length > 0 ? foundDef.components.map(c => `  - ${c.id} (${c.type})`) : ["  (none)"])
+        ];
+
+        const output = lines.join("\n");
+        return { success: true, data: output, message: output };
+    }
+
     _handleShow(parts, original) {
         // Syntax: show NAME
         if (parts.length < 2) {
@@ -773,6 +810,46 @@ export class CommandEngine {
     }
 
     /**
+     * Resolve vector pin references (e.g., bus 'A' or module vector port 'A' -> ['FA.A[0]', 'FA.A[1]', ...])
+     * @param {string} compName
+     * @param {string|null} pinName
+     * @param {string} pinType - "input" or "output"
+     * @returns {string[]|null} Array of full pin reference strings, or null if scalar/not found.
+     */
+    _getVectorPinRefs(compName, pinName, pinType) {
+        // 1. Check if compName is a registered bus
+        if (this.circuit && this.circuit.buses && this.circuit.buses.has(compName)) {
+            const bus = this.circuit.buses.get(compName);
+            return bus.members;
+        }
+
+        // 2. Check if compName is a component on the circuit
+        if (this.circuit && this.circuit.components && this.circuit.components.has(compName)) {
+            const comp = this.circuit.components.get(compName);
+
+            // If pinName is specified (e.g. MOD.A), look for matching indexed pins
+            if (pinName) {
+                const prefix = `${pinName}[`;
+                const matchingPins = comp.pins().filter(p => p.type === pinType && p.name.startsWith(prefix));
+                if (matchingPins.length > 0) {
+                    // Sort deterministically by index
+                    matchingPins.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+                    return matchingPins.map(p => `${compName}.${p.name}`);
+                }
+            } else if (comp.type === "UserModule") {
+                // If no pinName specified, collect all pins of pinType on the module
+                const matchingPins = comp.pins().filter(p => p.type === pinType);
+                if (matchingPins.length > 1) {
+                    matchingPins.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+                    return matchingPins.map(p => `${compName}.${p.name}`);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Flexible pin lookup supporting exact match, case-insensitive match, and common pin aliases.
      * @param {Component} comp
      * @param {string} pinRef
@@ -841,23 +918,63 @@ export class CommandEngine {
         let executedCount = 0;
 
         for (const item of expandedList) {
-            const res = this.execute(item.command);
-            if (!res.success) {
-                // Roll back circuit graph to initial snapshot
-                deserializeCircuit(JSON.parse(initialSnap), this.circuit, this.registry);
-                if (this.engine) {
-                    this.engine.evaluateAll();
-                }
-                this.inTransaction = false;
+            if (item.moduleDef) {
+                // Handle module compilation
+                try {
+                    const compiledDef = compileModuleDefinition(
+                        item.moduleDef.name,
+                        item.moduleDef.rawBodyText,
+                        item.moduleDef.startLine,
+                        this.registry,
+                        CommandEngine,
+                        SimulationEngine
+                    );
 
-                const contextHeader = item.loopContext ? `${item.loopContext}\n` : "";
-                const errMsg = `Line ${item.line}:\n${contextHeader}${res.error}`;
-                return {
-                    success: false,
-                    line: item.line,
-                    error: errMsg,
-                    message: errMsg
-                };
+                    if (this.registry) {
+                        const existingDef = findDefinitionByNameAndType(this.registry, compiledDef.name, compiledDef.type || "Custom");
+                        if (existingDef) {
+                            existingDef.inputs = compiledDef.inputs;
+                            existingDef.outputs = compiledDef.outputs;
+                            existingDef.components = compiledDef.components;
+                            existingDef.wires = compiledDef.wires;
+                        } else {
+                            this.registry.register(compiledDef);
+                        }
+                    }
+                } catch (e) {
+                    // Roll back circuit graph and registry on compilation error
+                    deserializeCircuit(JSON.parse(initialSnap), this.circuit, this.registry);
+                    if (this.engine) {
+                        this.engine.evaluateAll();
+                    }
+                    this.inTransaction = false;
+
+                    return {
+                        success: false,
+                        line: item.line,
+                        error: e.message,
+                        message: e.message
+                    };
+                }
+            } else {
+                const res = this.execute(item.command);
+                if (!res.success) {
+                    // Roll back circuit graph to initial snapshot
+                    deserializeCircuit(JSON.parse(initialSnap), this.circuit, this.registry);
+                    if (this.engine) {
+                        this.engine.evaluateAll();
+                    }
+                    this.inTransaction = false;
+
+                    const contextHeader = item.loopContext ? `${item.loopContext}\n` : "";
+                    const errMsg = `Line ${item.line}:\n${contextHeader}${res.error}`;
+                    return {
+                        success: false,
+                        line: item.line,
+                        error: errMsg,
+                        message: errMsg
+                    };
+                }
             }
 
             executedCount++;
@@ -876,11 +993,131 @@ export class CommandEngine {
     }
 
     /**
+     * Export a ModuleDefinition into a .sim script block.
+     * @param {ModuleDefinition} def
+     * @returns {string}
+     */
+    _exportModuleDefinition(def) {
+        const lines = [`module ${def.name} {`];
+
+        // 1. Export input ports in def.inputs order
+        for (const inputName of def.inputs) {
+            lines.push(`    input ${inputName}`);
+        }
+
+        // 2. Export output ports in def.outputs order
+        for (const outputName of def.outputs) {
+            lines.push(`    output ${outputName}`);
+        }
+
+        // Build temporary circuit for subcircuit component & wire export
+        const tempCircuit = new Circuit();
+        deserializeCircuit({
+            components: def.components,
+            wires: def.wires,
+            buses: [],
+            definitions: []
+        }, tempCircuit, this.registry);
+
+        const reverseTypeMap = {
+            "Input": "input",
+            "Output": "output",
+            "Constant HIGH": "constant high",
+            "Constant LOW": "constant low",
+            "Clock": "clock",
+            "Buffer": "buffer",
+            "NOT": "not",
+            "AND": "and",
+            "OR": "or",
+            "XOR": "xor",
+            "NAND": "nand",
+            "NOR": "nor",
+            "XNOR": "xnor",
+            "LED": "led",
+            "7-Segment Display": "7-segment display",
+            "10-Segment Display": "10-segment display",
+            "Button": "button",
+            "NPN Transistor": "npn",
+            "PNP Transistor": "pnp"
+        };
+
+        const inputGateNames = new Set(def.inputs);
+        const outputGateNames = new Set(def.outputs);
+
+        // Sort inner components
+        const sortedComps = Array.from(tempCircuit.components.values())
+            .sort((a, b) => a.id.localeCompare(b.id));
+
+        for (const comp of sortedComps) {
+            // Skip port Input / Output gates since they are declared via input/output statements
+            if (comp.type === "Input" && (inputGateNames.has(comp.id) || inputGateNames.has(comp.label))) continue;
+            if (comp.type === "Output" && (outputGateNames.has(comp.id) || outputGateNames.has(comp.label))) continue;
+
+            let typeAlias = reverseTypeMap[comp.type];
+            if (!typeAlias) {
+                if (comp.type === "UserModule" && comp.definition) {
+                    typeAlias = comp.definition.name;
+                } else {
+                    typeAlias = comp.type.toLowerCase();
+                }
+            }
+
+            lines.push(`    add ${typeAlias} ${comp.id}`);
+            lines.push(`    move ${comp.id} to (${comp.x},${comp.y})`);
+
+            if (comp.label && comp.label !== comp.id) {
+                lines.push(`    set ${comp.id}.label ${comp.label}`);
+            }
+        }
+
+        // Export inner wires
+        const sortedWires = Array.from(tempCircuit.wires.values())
+            .filter(w => w.fromPin && w.toPin && w.fromPin.component && w.toPin.component)
+            .sort((a, b) => {
+                const keyA = `${a.fromPin.component.id}.${a.fromPin.name}->${a.toPin.component.id}.${a.toPin.name}`;
+                const keyB = `${b.fromPin.component.id}.${b.fromPin.name}->${b.toPin.component.id}.${b.toPin.name}`;
+                return keyA.localeCompare(keyB);
+            });
+
+        for (const wire of sortedWires) {
+            const srcComp = wire.fromPin.component;
+            const dstComp = wire.toPin.component;
+
+            let srcRef = "";
+            if (srcComp.type === "Input" && (inputGateNames.has(srcComp.id) || inputGateNames.has(srcComp.label))) {
+                srcRef = srcComp.label || srcComp.id;
+            } else {
+                srcRef = `${srcComp.id}.${wire.fromPin.name}`;
+            }
+
+            let dstRef = "";
+            if (dstComp.type === "Output" && (outputGateNames.has(dstComp.id) || outputGateNames.has(dstComp.label))) {
+                dstRef = dstComp.label || dstComp.id;
+            } else {
+                dstRef = `${dstComp.id}.${wire.toPin.name}`;
+            }
+
+            lines.push(`    connect ${srcRef} ${dstRef}`);
+        }
+
+        lines.push("}");
+        return lines.join("\n");
+    }
+
+    /**
      * Export current circuit graph to .sim script string format.
      * @returns {string}
      */
     exportScript() {
         const lines = ["# Circuit exported to .sim format"];
+
+        // Export custom module definitions
+        if (this.registry) {
+            for (const def of this.registry.definitions.values()) {
+                lines.push(this._exportModuleDefinition(def));
+                lines.push("");
+            }
+        }
 
         // Export buses
         if (this.circuit.buses) {
