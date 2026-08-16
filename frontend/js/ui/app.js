@@ -12,6 +12,8 @@ import { Workspace } from "../canvas/workspace.js";
 import { isPointNearWire, drawWire, computeManhattanRoute, isPointNearSegment } from "../canvas/wires.js";
 import { SelectionManager, ClipboardManager, HistoryManager } from "../canvas/interactions.js";
 import { openModal, closeModal } from "./modals.js";
+import { ScriptEditor } from "./script_editor.js";
+import { renderMarkdown } from "./markdown_renderer.js";
 
 // Global instances
 const circuit = new Circuit();
@@ -965,7 +967,7 @@ function triggerRunScriptDialog(commandEngine, autoSync = false) {
     const html = `
         <div style="margin-bottom: 12px;">
             <p style="font-size: 13px; color: #ccc; margin-bottom: 8px;">Enter or paste a <code>.sim</code> circuit script:</p>
-            <textarea id="sim-script-input" rows="10" style="width: 100%; box-sizing: border-box; background-color: #1a1a1a; border: 1px solid #3d3d3d; border-radius: 4px; color: #39ff14; font-family: monospace; font-size: 13px; padding: 10px; resize: vertical; outline: none;" placeholder="# Full adder&#10;add input A&#10;add input B&#10;add output S&#10;connect A.out G1.A"></textarea>
+            <div id="sim-editor-mount"></div>
             <div id="sim-script-error" style="display: none; margin-top: 8px; padding: 8px 12px; background-color: rgba(231, 76, 60, 0.2); border: 1px solid #e74c3c; border-radius: 4px; color: #ff6b6b; font-size: 12px; font-family: monospace;"></div>
         </div>
         <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
@@ -981,19 +983,16 @@ function triggerRunScriptDialog(commandEngine, autoSync = false) {
     `;
 
     openModal('<i class="fa-solid fa-code"></i> Run .sim Script', html, () => {
-        const textarea = document.getElementById("sim-script-input");
+        const mountEl = document.getElementById("sim-editor-mount");
         const errorDiv = document.getElementById("sim-script-error");
 
-        if (autoSync) {
-            textarea.value = commandEngine.exportScript();
-        }
-
-        textarea.focus();
+        const initialCode = autoSync ? commandEngine.exportScript() : "";
+        const editor = new ScriptEditor(mountEl, { initialValue: initialCode });
 
         document.getElementById("btn-run-script-cancel").addEventListener("click", closeModal);
 
         document.getElementById("btn-sync-from-canvas").addEventListener("click", () => {
-            textarea.value = commandEngine.exportScript();
+            editor.setValue(commandEngine.exportScript());
         });
 
         document.getElementById("btn-load-sim-file").addEventListener("click", () => {
@@ -1011,7 +1010,7 @@ function triggerRunScriptDialog(commandEngine, autoSync = false) {
                 }
                 const reader = new FileReader();
                 reader.onload = (ev) => {
-                    textarea.value = ev.target.result;
+                    editor.setValue(ev.target.result);
                     fileInput.remove();
                 };
                 reader.readAsText(file);
@@ -1020,9 +1019,10 @@ function triggerRunScriptDialog(commandEngine, autoSync = false) {
         });
 
         document.getElementById("btn-run-script-exec").addEventListener("click", () => {
-            const code = textarea.value;
+            const code = editor.getValue();
             errorDiv.style.display = "none";
             errorDiv.textContent = "";
+            editor.setErrorLine(null);
 
             const res = commandEngine.executeScript(code);
             if (res.success) {
@@ -1036,9 +1036,31 @@ function triggerRunScriptDialog(commandEngine, autoSync = false) {
             } else {
                 errorDiv.style.display = "block";
                 errorDiv.textContent = res.error;
+                if (res.line) {
+                    editor.setErrorLine(res.line);
+                }
             }
         });
     });
+}
+
+function triggerScriptDocsDialog() {
+    fetch("docs/scripting.md")
+    .then(res => res.text())
+    .then(markdownText => {
+        const html = `
+            <div style="max-height: 480px; overflow-y: auto; padding: 12px; background-color: #161616; border: 1px solid #333; border-radius: 6px; color: #ddd; font-size: 13px; line-height: 1.6;">
+                ${renderMarkdown(markdownText)}
+            </div>
+            <div class="modal-footer" style="margin-top: 15px; text-align: right;">
+                <button class="btn btn-primary" id="btn-close-docs">Close</button>
+            </div>
+        `;
+        openModal('<i class="fa-solid fa-book"></i> Scripting Language Reference (.sim)', html, () => {
+            document.getElementById("btn-close-docs").addEventListener("click", closeModal);
+        });
+    })
+    .catch(err => alert("Error loading scripting documentation: " + err.message));
 }
 
 /**
@@ -1219,6 +1241,10 @@ function setupUIEvents(commandEngine) {
 
     document.getElementById("btn-export-sim").addEventListener("click", () => {
         triggerExportSimDialog(commandEngine);
+    });
+
+    document.getElementById("btn-script-docs").addEventListener("click", () => {
+        triggerScriptDocsDialog();
     });
 
     document.getElementById("btn-export-library").addEventListener("click", () => {

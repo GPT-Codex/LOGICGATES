@@ -19,6 +19,11 @@ def index():
     return send_from_directory("frontend", "index.html")
 
 
+@app.route("/docs/<path:filename>")
+def serve_docs(filename):
+    return send_from_directory("docs", filename)
+
+
 @app.route("/<path:path>")
 def static_proxy(path):
     # Try serving from frontend directory
