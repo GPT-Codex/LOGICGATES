@@ -1,10 +1,10 @@
 import { createComponent, COMPONENT_REGISTRY } from "./components.js";
 import { Circuit, Wire, Bus } from "./core.js";
-import { UserModule, detachModuleInstance } from "./modules.js";
+import { UserModule, ModuleDefinition, detachModuleInstance } from "./modules.js";
 import { serializeCircuit, deserializeCircuit } from "./serialization.js";
 import { parseBooleanExpression } from "./expr_parser.js";
 import { synthesizeExpression } from "./expr_synthesizer.js";
-import { expandScript, compileModuleDefinition, buildScriptModuleDependencyGraph } from "./script_parser.js";
+import { expandScript, compileModuleDefinition, buildScriptModuleDependencyGraph, parseAndValidateModuleArgs } from "./script_parser.js";
 import { SimulationEngine } from "./simulation_engine.js";
 import { findDefinitionByNameAndType } from "./serialization.js";
 
@@ -244,7 +244,16 @@ export class CommandEngine {
         // Reconstruct type in case of space-separated types (e.g., "npn transistor")
         // We look for parts from index 1 up to second-to-last as type, last part is NAME
         const name = parts[parts.length - 1];
-        const rawTypeStr = parts.slice(1, -1).join(" ").trim();
+        let rawTypeStr = parts.slice(1, -1).join(" ").trim();
+
+        // Check for parameterized instantiation: TYPE(ARGS)
+        let paramArgsStr = null;
+        const argMatch = rawTypeStr.match(/^([a-zA-Z0-9_\s]+)\(([^)]*)\)$/);
+        if (argMatch) {
+            rawTypeStr = argMatch[1].trim();
+            paramArgsStr = argMatch[2].trim();
+        }
+
         const typeCandidate = rawTypeStr.toLowerCase();
 
         let actualType = this.typeMap[typeCandidate];
@@ -272,6 +281,50 @@ export class CommandEngine {
         // Check duplicates
         if (this.circuit.components.has(name)) {
             return { success: false, error: `Component with name '${name}' already exists` };
+        }
+
+        // If UserModule with parameters, handle specialization
+        if (actualType === "UserModule" && customDef) {
+            if (customDef.params && customDef.params.length > 0) {
+                try {
+                    const paramScope = parseAndValidateModuleArgs(
+                        customDef.params,
+                        paramArgsStr,
+                        customDef.name,
+                        name
+                    );
+
+                    // Build deterministic key for specialized definition
+                    const specKey = customDef.params.map(p => `${p}=${paramScope[p]}`).join(",");
+                    let specDef = customDef.specializations.get(specKey);
+
+                    if (!specDef) {
+                        const specName = `${customDef.name}_${specKey.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+
+                        specDef = compileModuleDefinition(
+                            customDef.name,
+                            customDef.rawBodyText || "",
+                            customDef.startLine || 1,
+                            this.registry,
+                            CommandEngine,
+                            SimulationEngine,
+                            paramScope,
+                            customDef.params
+                        );
+
+                        customDef.specializations.set(specKey, specDef);
+                        if (this.registry) {
+                            this.registry.register(specDef);
+                        }
+                    }
+
+                    customDef = specDef;
+                } catch (e) {
+                    return { success: false, error: e.message };
+                }
+            } else if (paramArgsStr) {
+                return { success: false, error: `Module '${customDef.name}' does not accept parameters.` };
+            }
         }
 
         // Create component at default position (100, 100) or center
@@ -772,6 +825,7 @@ export class CommandEngine {
 
         const lines = [
             `Module: ${foundDef.name}`,
+            ...(foundDef.params && foundDef.params.length > 0 ? [`Parameters: ${foundDef.params.join(", ")}`] : []),
             "",
             "Inputs:",
             ...(inputsFormatted.length > 0 ? inputsFormatted.map(i => `  ${i}`) : ["  (none)"]),
@@ -825,6 +879,9 @@ export class CommandEngine {
             const props = [
                 `Instance: ${comp.id}`,
                 `Type: ${defName}`,
+                ...(comp.paramValues && Object.keys(comp.paramValues).length > 0
+                    ? [`Parameters: ${Object.entries(comp.paramValues).map(([k, v]) => `${k} = ${v}`).join(", ")}`]
+                    : []),
                 `Position: (${comp.x}, ${comp.y})`,
                 `Flip: H=${comp.flipX ? "yes" : "no"}, V=${comp.flipY ? "yes" : "no"}`,
                 "",
@@ -1274,25 +1331,57 @@ export class CommandEngine {
             // 4. Compile modules in topological order
             for (const mDef of orderedDefs) {
                 try {
-                    const compiledDef = compileModuleDefinition(
-                        mDef.name,
-                        mDef.rawBodyText,
-                        mDef.startLine,
-                        this.registry,
-                        CommandEngine,
-                        SimulationEngine
-                    );
+                    if (mDef.params && mDef.params.length > 0) {
+                        const modId = `mod_${mDef.name.toLowerCase().replace(/[^a-z0-9_]/g, "_")}`;
+                        const templateDef = new ModuleDefinition(
+                            modId,
+                            mDef.name,
+                            `Parameterized script-defined module ${mDef.name}`,
+                            "Custom",
+                            [],
+                            [],
+                            [],
+                            [],
+                            "Module",
+                            "Custom",
+                            [],
+                            mDef.params,
+                            null
+                        );
+                        templateDef.rawBodyText = mDef.rawBodyText;
+                        templateDef.startLine = mDef.startLine;
 
-                    if (this.registry) {
-                        const existingDef = findDefinitionByNameAndType(this.registry, compiledDef.name, compiledDef.type || "Custom");
-                        if (existingDef) {
-                            existingDef.inputs = compiledDef.inputs;
-                            existingDef.outputs = compiledDef.outputs;
-                            existingDef.components = compiledDef.components;
-                            existingDef.wires = compiledDef.wires;
-                            existingDef.dependencies = compiledDef.dependencies;
-                        } else {
-                            this.registry.register(compiledDef);
+                        if (this.registry) {
+                            const existingDef = findDefinitionByNameAndType(this.registry, templateDef.name, templateDef.type || "Custom");
+                            if (existingDef) {
+                                existingDef.params = mDef.params;
+                                existingDef.rawBodyText = mDef.rawBodyText;
+                                existingDef.startLine = mDef.startLine;
+                            } else {
+                                this.registry.register(templateDef);
+                            }
+                        }
+                    } else {
+                        const compiledDef = compileModuleDefinition(
+                            mDef.name,
+                            mDef.rawBodyText,
+                            mDef.startLine,
+                            this.registry,
+                            CommandEngine,
+                            SimulationEngine
+                        );
+
+                        if (this.registry) {
+                            const existingDef = findDefinitionByNameAndType(this.registry, compiledDef.name, compiledDef.type || "Custom");
+                            if (existingDef) {
+                                existingDef.inputs = compiledDef.inputs;
+                                existingDef.outputs = compiledDef.outputs;
+                                existingDef.components = compiledDef.components;
+                                existingDef.wires = compiledDef.wires;
+                                existingDef.dependencies = compiledDef.dependencies;
+                            } else {
+                                this.registry.register(compiledDef);
+                            }
                         }
                     }
                     executedCount++;
@@ -1356,7 +1445,8 @@ export class CommandEngine {
      * @returns {string}
      */
     _exportModuleDefinition(def) {
-        const lines = [`module ${def.name} {`];
+        const paramsHeader = def.params && def.params.length > 0 ? `(${def.params.join(", ")})` : "";
+        const lines = [`module ${def.name}${paramsHeader} {`];
 
         // 1. Export input ports in def.inputs order
         for (const inputName of def.inputs) {

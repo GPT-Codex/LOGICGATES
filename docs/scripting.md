@@ -22,7 +22,7 @@ The `.sim` circuit scripting language allows you to create, modify, connect, and
 | `bus` | `bus NAME[START..END]` | Declare a first-class $N$-bit bus vector. |
 | `expr` | `expr OUTPUT = BOOLEAN_EXPRESSION` | Synthesize a boolean expression into gates and wires. |
 | `for` | `for VAR in START..END { ... }` | Loop over an inclusive numerical range. |
-| `module` | `module NAME { ... }` | Define a reusable, compiled subcircuit module. |
+| `module` | `module NAME { ... }` / `module NAME(P1, P2) { ... }` | Define a reusable, compiled (or parameterized) subcircuit module. |
 
 ---
 
@@ -43,6 +43,43 @@ module FullAdder {
     expr Cout = (A AND B) OR (A AND Cin) OR (B AND Cin)
 }
 ```
+
+### Parameterized Modules
+Modules can accept compile-time integer parameters:
+```text
+module RCA(width) {
+    input A[0..width-1]
+    input B[0..width-1]
+    input Cin
+
+    output S[0..width-1]
+    output Cout
+
+    add FADDER FA[0]
+    connect A[0] FA[0].A
+    connect B[0] FA[0].B
+    connect Cin FA[0].Cin
+    connect FA[0].S S[0]
+
+    for i in 1..width-1 {
+        add FADDER FA[i]
+        connect A[i] FA[i].A
+        connect B[i] FA[i].B
+        connect FA[i - 1].Cout FA[i].Cin
+        connect FA[i].S S[i]
+    }
+
+    connect FA[width - 1].Cout Cout
+}
+```
+
+Instantiate parameterized modules using positional or named arguments:
+- Positional: `add RCA(16) ADD16`
+- Named: `add RCA(width=16) ADD16`
+- Expression args: `add RCA(w * 2) ADD32`
+
+Compile-time parameters are evaluated for port vector widths, range bounds, array indices, coordinate math, and nested parameter propagation (`add RCA(width=w) SUB`).
+Parameter values must be integers, and parameters controlling widths/sizes must be positive non-zero integers bounded by safety limits (`width <= 256`). Specialized definitions are automatically compiled and cached per unique argument signature.
 
 ### Module Ports (`input` and `output`)
 External module pins are declared using `input NAME` and `output NAME`:

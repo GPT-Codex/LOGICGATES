@@ -20,7 +20,7 @@ export class ModuleDefinition {
      * @param {string} type
      * @param {string[]} dependencies - array of child module names/IDs
      */
-    constructor(id, name, description, category, inputs, outputs, components, wires, moduleType = "Module", type = null, dependencies = []) {
+    constructor(id, name, description, category, inputs, outputs, components, wires, moduleType = "Module", type = null, dependencies = [], params = [], paramValues = null) {
         this.id = id;
         this.name = name;
         this.description = description;
@@ -32,6 +32,9 @@ export class ModuleDefinition {
         this.wires = wires;           // serialized data
         this.moduleType = moduleType; // "Module", "Cable", "Connector"
         this.dependencies = dependencies || [];
+        this.params = params || [];                 // e.g. ["width"]
+        this.paramValues = paramValues || null;      // e.g. { width: 16 }
+        this.specializations = new Map();           // paramKey -> ModuleDefinition
     }
 }
 
@@ -163,6 +166,8 @@ export class UserModule extends Component {
         super(id, definition.name, x, y);
         this.definition = definition;
         this.registry = registry;
+        this.params = definition.params || [];
+        this.paramValues = definition.paramValues || null;
         this.type = "UserModule";
 
         // Calculate dynamic dimensions based on pin count

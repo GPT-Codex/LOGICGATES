@@ -10,7 +10,7 @@
  */
 
 const COMMANDS = new Set([
-    "add", "remove", "move", "connect", "disconnect", "set", "get", "list", "show", "expr", "bus", "net", "for", "in"
+    "add", "remove", "move", "connect", "disconnect", "set", "get", "list", "show", "expr", "bus", "net", "for", "in", "module"
 ]);
 
 const COMP_TYPES = new Set([

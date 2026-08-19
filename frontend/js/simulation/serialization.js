@@ -111,7 +111,11 @@ export function serializeCircuit(circuit, registry) {
                 components: def.components,
                 wires: def.wires,
                 moduleType: def.moduleType || "Module",
-                dependencies: def.dependencies || []
+                dependencies: def.dependencies || [],
+                params: def.params || [],
+                paramValues: def.paramValues || null,
+                rawBodyText: def.rawBodyText || "",
+                startLine: def.startLine || 1
             });
         }
     }
@@ -163,8 +167,12 @@ export function deserializeCircuit(data, circuit, registry) {
                 defData.wires,
                 defData.moduleType || "Module",
                 defType,
-                defData.dependencies || []
+                defData.dependencies || [],
+                defData.params || [],
+                defData.paramValues || null
             );
+            def.rawBodyText = defData.rawBodyText || "";
+            def.startLine = defData.startLine || 1;
             registry.register(def);
         }
     }

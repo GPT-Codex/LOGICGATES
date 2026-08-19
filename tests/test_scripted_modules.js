@@ -864,4 +864,230 @@ function createTestSetup() {
     console.log("  ✓ Detachment regression testing for nested modules passed");
 }
 
+// 18. Parameterized Modules Unit Tests
+{
+    const { circuit, engine, cmdEngine, registry } = createTestSetup();
+    const script = `
+        module FADDER {
+            input A
+            input B
+            input Cin
+
+            output S
+            output Cout
+
+            expr S = A XOR B XOR Cin
+            expr Cout = (A AND B) OR (Cin AND (A XOR B))
+        }
+
+        module RCA(width) {
+            input A[0..width-1]
+            input B[0..width-1]
+            input Cin
+
+            output S[0..width-1]
+            output Cout
+
+            add FADDER FA[0]
+            connect A[0] -> FA[0].A
+            connect B[0] -> FA[0].B
+            connect Cin -> FA[0].Cin
+            connect FA[0].S -> S[0]
+
+            for i in 1..width-1 {
+                add FADDER FA[i]
+                connect A[i] -> FA[i].A
+                connect B[i] -> FA[i].B
+                connect FA[i - 1].Cout -> FA[i].Cin
+                connect FA[i].S -> S[i]
+            }
+
+            connect FA[width - 1].Cout -> Cout
+        }
+
+        add input Cin
+        add RCA(4) ADD4
+        add output Cout
+
+        connect Cin -> ADD4.Cin
+        connect ADD4.Cout -> Cout
+
+        for i in 0..3 {
+            add input A[i]
+            add input B[i]
+            add output S[i]
+
+            connect A[i] -> ADD4.A[i]
+            connect B[i] -> ADD4.B[i]
+            connect ADD4.S[i] -> S[i]
+        }
+    `;
+
+    const res = cmdEngine.executeScript(script);
+    assert.strictEqual(res.success, true, res.error);
+
+    const add4Comp = circuit.components.get("ADD4");
+    assert.ok(add4Comp);
+    assert.strictEqual(add4Comp.inputs.length, 9); // A[0..3], B[0..3], Cin
+    assert.strictEqual(add4Comp.outputs.length, 5); // S[0..3], Cout
+
+    // Verify truth table for 4-bit parameterized adder (512 cases)
+    const cinComp = circuit.components.get("Cin");
+    const coutComp = circuit.components.get("Cout");
+    let testCasesPassed = 0;
+
+    for (let cVal = 0; cVal <= 1; cVal++) {
+        cinComp.stateValue = cVal;
+        engine.triggerInputToggle(cinComp);
+
+        for (let aVal = 0; aVal < 16; aVal++) {
+            for (let bVal = 0; bVal < 16; bVal++) {
+                for (let i = 0; i < 4; i++) {
+                    const gA = circuit.components.get(`A[${i}]`);
+                    const gB = circuit.components.get(`B[${i}]`);
+
+                    gA.stateValue = (aVal >> i) & 1;
+                    gB.stateValue = (bVal >> i) & 1;
+
+                    engine.triggerInputToggle(gA);
+                    engine.triggerInputToggle(gB);
+                }
+
+                let sumBits = 0;
+                for (let i = 0; i < 4; i++) {
+                    const bit = circuit.components.get(`S[${i}]`).inputs[0].value;
+                    sumBits |= (bit << i);
+                }
+                const actualCout = coutComp.inputs[0].value;
+
+                const expectedTotal = aVal + bVal + cVal;
+                const actualTotal = sumBits + (actualCout << 4);
+
+                assert.strictEqual(actualTotal, expectedTotal, `RCA(4) failure for A=${aVal}, B=${bVal}, Cin=${cVal}`);
+                testCasesPassed++;
+            }
+        }
+    }
+    assert.strictEqual(testCasesPassed, 512);
+    console.log("  ✓ Parameterized RCA(4) truth table evaluation passed (512/512)");
+}
+
+// 19. Parameter Validation & Safety Limits
+{
+    const { cmdEngine } = createTestSetup();
+
+    // Missing parameter argument
+    const scriptMissing = `
+        module RCA(width) {
+            input A[0..width-1]
+            output S[0..width-1]
+        }
+        add RCA ADD0
+    `;
+    const resMissing = cmdEngine.executeScript(scriptMissing);
+    assert.strictEqual(resMissing.success, false);
+    assert.ok(resMissing.error.includes("Parameter 'width' is required") || resMissing.error.includes("parameters"));
+
+    // Negative width rejection
+    const scriptNeg = `
+        module RCA(width) {
+            input A[0..width-1]
+            output S[0..width-1]
+        }
+        add RCA(-4) ADD0
+    `;
+    const resNeg = cmdEngine.executeScript(scriptNeg);
+    assert.strictEqual(resNeg.success, false);
+    assert.ok(resNeg.error.includes("positive integer") || resNeg.error.includes("Invalid range"));
+
+    // Safety limit > 256 rejection
+    const scriptOverflow = `
+        module RCA(width) {
+            input A[0..width-1]
+            output S[0..width-1]
+        }
+        add RCA(500) ADD0
+    `;
+    const resOverflow = cmdEngine.executeScript(scriptOverflow);
+    assert.strictEqual(resOverflow.success, false);
+    assert.ok(resOverflow.error.includes("exceeds maximum safety limit"));
+
+    console.log("  ✓ Parameter validation & safety limits enforcement passed");
+}
+
+// 20. Nested Parameter Propagation & Multiple Specializations
+{
+    const { circuit, engine, cmdEngine } = createTestSetup();
+    const script = `
+        module FADDER {
+            input A
+            input B
+            input Cin
+            output S
+            output Cout
+            expr S = A XOR B XOR Cin
+            expr Cout = (A AND B) OR (Cin AND (A XOR B))
+        }
+
+        module RCA(width) {
+            input A[0..width-1]
+            input B[0..width-1]
+            input Cin
+            output S[0..width-1]
+            output Cout
+
+            add FADDER FA[0]
+            connect A[0] -> FA[0].A
+            connect B[0] -> FA[0].B
+            connect Cin -> FA[0].Cin
+            connect FA[0].S -> S[0]
+
+            for i in 1..width-1 {
+                add FADDER FA[i]
+                connect A[i] -> FA[i].A
+                connect B[i] -> FA[i].B
+                connect FA[i - 1].Cout -> FA[i].Cin
+                connect FA[i].S -> S[i]
+            }
+
+            connect FA[width - 1].Cout -> Cout
+        }
+
+        module ALU(w) {
+            input A[0..w-1]
+            input B[0..w-1]
+            input Cin
+            output S[0..w-1]
+            output Cout
+
+            add RCA(width=w) ADDER
+            connect A -> ADDER.A
+            connect B -> ADDER.B
+            connect Cin -> ADDER.Cin
+            connect ADDER.S -> S
+            connect ADDER.Cout -> Cout
+        }
+
+        add ALU(w=8) ALU8
+        add ALU(16) ALU16
+    `;
+
+    const res = cmdEngine.executeScript(script);
+    assert.strictEqual(res.success, true, res.error);
+
+    const alu8Comp = circuit.components.get("ALU8");
+    const alu16Comp = circuit.components.get("ALU16");
+
+    assert.ok(alu8Comp);
+    assert.ok(alu16Comp);
+
+    assert.strictEqual(alu8Comp.inputs.length, 17);  // A[0..7], B[0..7], Cin
+    assert.strictEqual(alu8Comp.outputs.length, 9);   // S[0..7], Cout
+
+    assert.strictEqual(alu16Comp.inputs.length, 33); // A[0..15], B[0..15], Cin
+    assert.strictEqual(alu16Comp.outputs.length, 17); // S[0..15], Cout
+
+    console.log("  ✓ Nested parameter propagation and multi-specialization passed");
+}
+
 console.log("All Scripted Modules unit tests passed successfully!");

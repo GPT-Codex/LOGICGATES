@@ -17,6 +17,120 @@ import { serializeCircuit, findDefinitionByNameAndType } from "./serialization.j
 const MAX_NESTING_DEPTH = 5;
 const MAX_TOTAL_ITERATIONS = 100000;
 const MAX_EXPANDED_COMMANDS = 50000;
+const MAX_MODULE_WIDTH = 256;
+
+/**
+ * Validate parameter arguments against parameter declarations.
+ * @param {string[]} paramNames
+ * @param {any[]} argValues
+ * @param {string} moduleName
+ * @param {string} [instanceName]
+ * @returns {Object.<string, number>}
+ */
+export function parseAndValidateModuleArgs(paramNames, argsStr, moduleName, instanceName = "") {
+    const instHeader = instanceName ? ` as ${instanceName}` : "";
+
+    if (!paramNames || paramNames.length === 0) {
+        if (argsStr && argsStr.trim()) {
+            throw new Error(`Cannot instantiate ${moduleName}${instHeader}:\nModule '${moduleName}' does not accept parameters.`);
+        }
+        return {};
+    }
+
+    if (!argsStr || !argsStr.trim()) {
+        const missingParam = paramNames[0];
+        throw new Error(`Cannot instantiate ${moduleName}${instHeader}:\nParameter '${missingParam}' is required.\nExpected ${paramNames.length} parameter(s) (${paramNames.join(", ")}), received 0.`);
+    }
+
+    const rawArgs = argsStr.split(",").map(a => a.trim()).filter(Boolean);
+    const argValues = new Array(paramNames.length);
+    let hasNamed = false;
+
+    for (let i = 0; i < rawArgs.length; i++) {
+        const arg = rawArgs[i];
+        if (arg.includes("=")) {
+            hasNamed = true;
+            const eqIdx = arg.indexOf("=");
+            const pName = arg.substring(0, eqIdx).trim();
+            const pVal = arg.substring(eqIdx + 1).trim();
+            const idx = paramNames.findIndex(p => p.toLowerCase() === pName.toLowerCase());
+            if (idx === -1) {
+                throw new Error(`Cannot instantiate ${moduleName}${instHeader}:\nUnknown parameter '${pName}'. Expected one of: ${paramNames.join(", ")}.`);
+            }
+            argValues[idx] = pVal;
+        } else {
+            if (hasNamed) {
+                throw new Error(`Cannot mix positional arguments after named arguments in instantiation of '${moduleName}'.`);
+            }
+            if (i < paramNames.length) {
+                argValues[i] = arg;
+            } else {
+                throw new Error(`Cannot instantiate ${moduleName}${instHeader}:\nToo many arguments provided.\nExpected ${paramNames.length} parameter(s) (${paramNames.join(", ")}), received ${rawArgs.length}.`);
+            }
+        }
+    }
+
+    return validateModuleParameters(paramNames, argValues, moduleName, instanceName);
+}
+
+export function validateModuleParameters(paramNames, argValues, moduleName, instanceName = "") {
+    const instHeader = instanceName ? ` as ${instanceName}` : "";
+
+    if (!paramNames || paramNames.length === 0) {
+        if (argValues && argValues.length > 0) {
+            throw new Error(`Cannot instantiate ${moduleName}${instHeader}:\nModule '${moduleName}' does not accept parameters.\nReceived: ${argValues.length} argument(s).`);
+        }
+        return {};
+    }
+
+    const providedCount = argValues ? argValues.filter(v => v !== undefined).length : 0;
+
+    if (providedCount < paramNames.length) {
+        let missingParam = paramNames[0];
+        for (let i = 0; i < paramNames.length; i++) {
+            if (!argValues || argValues[i] === undefined) {
+                missingParam = paramNames[i];
+                break;
+            }
+        }
+        throw new Error(`Cannot instantiate ${moduleName}${instHeader}:\nParameter '${missingParam}' is required.\nExpected ${paramNames.length} parameter(s) (${paramNames.join(", ")}), received ${providedCount}.`);
+    }
+
+    if (argValues.length > paramNames.length) {
+        throw new Error(`Cannot instantiate ${moduleName}${instHeader}:\nToo many arguments provided.\nExpected ${paramNames.length} parameter(s) (${paramNames.join(", ")}), received ${argValues.length}.`);
+    }
+
+    const paramScope = {};
+
+    for (let i = 0; i < paramNames.length; i++) {
+        const pName = paramNames[i];
+        const rawArg = argValues[i];
+
+        let numVal = parseInt(rawArg, 10);
+        if (typeof rawArg === "number") {
+            numVal = rawArg;
+        }
+
+        if (isNaN(numVal)) {
+            throw new Error(`Cannot instantiate ${moduleName}${instHeader}:\nParameter '${pName}' must be an integer.\nReceived: "${rawArg}".`);
+        }
+
+        const lowerPName = pName.toLowerCase();
+        if (lowerPName.includes("width") || lowerPName.includes("size") || lowerPName.includes("count") || lowerPName.includes("stage") || lowerPName.includes("bit")) {
+            if (numVal <= 0) {
+                throw new Error(`Cannot instantiate ${moduleName}${instHeader}:\nParameter '${pName}' must be a positive integer.\nReceived: ${numVal}`);
+            }
+        }
+
+        if (numVal > MAX_MODULE_WIDTH) {
+            throw new Error(`Cannot instantiate ${moduleName}${instHeader}:\nParameter '${pName}' value (${numVal}) exceeds maximum safety limit (${MAX_MODULE_WIDTH}).`);
+        }
+
+        paramScope[pName] = numVal;
+    }
+
+    return paramScope;
+}
 
 /**
  * Evaluate a simple integer arithmetic expression string given a variable scope map.
@@ -165,12 +279,30 @@ export function expandRange(rangeStr, scope = {}) {
     const start = evaluateIntExpression(startStr, scope);
     const end = evaluateIntExpression(endStr, scope);
 
+    if (isNaN(start) || isNaN(end)) {
+        throw new Error(`Invalid range bounds in '${rangeStr}' after parameter evaluation.`);
+    }
+
     const result = [];
     if (start <= end) {
+        if (start < 0 || end < 0) {
+            let paramContext = "";
+            if (Object.keys(scope).length > 0) {
+                paramContext = "\n" + Object.entries(scope).map(([k, v]) => `Parameter ${k} = ${v}`).join("\n");
+            }
+            throw new Error(`Invalid range ${rangeStr} after parameter evaluation.\nResolved range: ${start}..${end}${paramContext}`);
+        }
         for (let i = start; i <= end; i++) {
             result.push(i);
         }
     } else {
+        if (start < 0 || end < 0) {
+            let paramContext = "";
+            if (Object.keys(scope).length > 0) {
+                paramContext = "\n" + Object.entries(scope).map(([k, v]) => `Parameter ${k} = ${v}`).join("\n");
+            }
+            throw new Error(`Invalid range ${rangeStr} after parameter evaluation.\nResolved range: ${start}..${end}${paramContext}`);
+        }
         for (let i = start; i >= end; i--) {
             result.push(i);
         }
@@ -187,14 +319,24 @@ export function expandRange(rangeStr, scope = {}) {
  * @returns {string}
  */
 export function substituteCommand(commandStr, scope) {
-    if (Object.keys(scope).length === 0) {
+    if (!scope || Object.keys(scope).length === 0) {
         return commandStr;
     }
 
     let result = commandStr;
 
-    // 1. Substitute array brackets: e.g. G[i], G[i + 1], G[row][col]
-    // Replace [EXPR] with evaluated [INT]
+    // 1. Substitute range brackets: e.g. [0..width-1] or [width-1..0]
+    result = result.replace(/\[([^\]\.]+)\.\.([^\]]+)\]/g, (match, startExpr, endExpr) => {
+        try {
+            const startVal = evaluateIntExpression(startExpr, scope);
+            const endVal = evaluateIntExpression(endExpr, scope);
+            return `[${startVal}..${endVal}]`;
+        } catch (e) {
+            return match;
+        }
+    });
+
+    // 2. Substitute array brackets: e.g. G[i], G[i + 1], G[row][col]
     result = result.replace(/\[([^\]]+)\]/g, (match, inner) => {
         try {
             const val = evaluateIntExpression(inner, scope);
@@ -204,7 +346,30 @@ export function substituteCommand(commandStr, scope) {
         }
     });
 
-    // 2. Substitute coordinate tuples: to (EXPR, EXPR) or by (EXPR, EXPR)
+    // 3. Substitute type arguments in add command: e.g. add RCA(top_w) ADD16 or add SUB(w = top_w * 2) S1
+    result = result.replace(/^(\s*add\s+[a-zA-Z0-9_\s]+)\(([^)]+)\)/i, (match, prefix, argsInside) => {
+        try {
+            const argParts = argsInside.split(",");
+            const evalParts = argParts.map(argStr => {
+                const trimmedArg = argStr.trim();
+                const eqIdx = trimmedArg.indexOf("=");
+                if (eqIdx !== -1) {
+                    const paramName = trimmedArg.substring(0, eqIdx).trim();
+                    const valExpr = trimmedArg.substring(eqIdx + 1).trim();
+                    const val = evaluateIntExpression(valExpr, scope);
+                    return `${paramName}=${val}`;
+                } else {
+                    const val = evaluateIntExpression(trimmedArg, scope);
+                    return `${val}`;
+                }
+            });
+            return `${prefix}(${evalParts.join(", ")})`;
+        } catch (e) {
+            return match;
+        }
+    });
+
+    // 4. Substitute coordinate tuples: to (EXPR, EXPR) or by (EXPR, EXPR)
     result = result.replace(/\b(to|by)\s*\(\s*([^,]+)\s*,\s*([^\)]+)\s*\)/g, (match, rel, xExpr, yExpr) => {
         try {
             const xVal = evaluateIntExpression(xExpr, scope);
@@ -233,7 +398,7 @@ export function substituteCommand(commandStr, scope) {
  * @param {string} scriptText
  * @returns {Array<{ line: number, command: string, loopContext?: string }>}
  */
-export function expandScript(scriptText) {
+export function expandScript(scriptText, initialScope = {}) {
     if (typeof scriptText !== "string") {
         throw new Error("Invalid script content");
     }
@@ -246,7 +411,7 @@ export function expandScript(scriptText) {
     /**
      * Recursive block processor
      * @param {number} lineIdx - current line index in rawLines
-     * @param {Object.<string, number>} scope - current loop variable scope
+     * @param {Object.<string, number>} scope - current variable scope
      * @param {number} depth - nesting depth
      * @param {string[]} loopStack - stack of "var = val" strings
      * @returns {number} next lineIdx to process
@@ -277,10 +442,12 @@ export function expandScript(scriptText) {
                 return lineIdx; // End of block
             }
 
-            // Check for module definition block: `module ModuleName {`
-            const moduleMatch = trimmed.match(/^module\s+(.+?)\s*\{$/i);
+            // Check for module definition block: `module ModuleName(params) {` or `module ModuleName {`
+            const moduleMatch = trimmed.match(/^module\s+(.+?)(?:\s*\(([^)]*)\))?\s*\{$/i);
             if (moduleMatch && depth === 0) {
                 const moduleName = moduleMatch[1];
+                const rawParamsStr = moduleMatch[2];
+                const params = rawParamsStr ? rawParamsStr.split(",").map(p => p.trim()).filter(Boolean) : [];
                 const moduleStartLine = lineNum;
                 const moduleBodyLines = [];
 
@@ -313,6 +480,7 @@ export function expandScript(scriptText) {
                     command: `__MODULE_DEF__ ${moduleName}`,
                     moduleDef: {
                         name: moduleName,
+                        params: params,
                         startLine: moduleStartLine,
                         rawBodyText: moduleBodyLines.join("\n")
                     }
@@ -397,7 +565,7 @@ export function expandScript(scriptText) {
         return lineIdx;
     }
 
-    processBlock(0, {}, 0, []);
+    processBlock(0, { ...initialScope }, 0, []);
 
     return expandedList;
 }
@@ -469,11 +637,11 @@ export function buildScriptModuleDependencyGraph(moduleDefs, registry) {
  * @param {typeof SimulationEngine} SimulationEngineClass
  * @returns {ModuleDefinition}
  */
-export function compileModuleDefinition(moduleName, rawBodyText, startLine, registry, CommandEngineClass, SimulationEngineClass) {
-    // 1. Expand script inside module body
+export function compileModuleDefinition(moduleName, rawBodyText, startLine, registry, CommandEngineClass, SimulationEngineClass, paramScope = {}, params = []) {
+    // 1. Expand script inside module body with parameter scope
     let bodyCommands;
     try {
-        bodyCommands = expandScript(rawBodyText);
+        bodyCommands = expandScript(rawBodyText, paramScope);
     } catch (e) {
         throw new Error(`Module ${moduleName}:\nLine ${startLine}:\n${e.message}`);
     }
@@ -618,8 +786,12 @@ export function compileModuleDefinition(moduleName, rawBodyText, startLine, regi
         serialized.wires,
         "Module",
         "Custom",
-        Array.from(dependenciesSet)
+        Array.from(dependenciesSet),
+        params,
+        Object.keys(paramScope).length > 0 ? paramScope : null
     );
+    def.rawBodyText = rawBodyText;
+    def.startLine = startLine;
 
     return def;
 }
