@@ -1,4 +1,63 @@
-Traceback (most recent call last):
-  File "/app/app.py", line 3, in <module>
-    from flask import Flask, request, jsonify, send_from_directory
-ModuleNotFoundError: No module named 'flask'
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [19/Aug/2026 16:54:00] "HEAD / HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:20] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:20] "GET /css/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:20] "GET /js/ui/app.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/simulation/core.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/simulation/serialization.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/simulation/modules.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/simulation/components.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/simulation/command_engine.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/simulation/simulation_engine.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/canvas/workspace.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/canvas/wires.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/canvas/interactions.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/ui/modals.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/ui/markdown_renderer.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/ui/script_editor.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/simulation/expr_parser.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/simulation/expr_synthesizer.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /js/simulation/script_parser.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:55:21] "GET /api/modules HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:22] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:22] "GET /css/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:22] "GET /js/ui/app.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:22] "GET /js/simulation/core.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:22] "GET /js/simulation/modules.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:22] "GET /js/simulation/command_engine.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:22] "GET /js/simulation/serialization.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:22] "GET /js/simulation/simulation_engine.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:22] "GET /js/simulation/components.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:23] "GET /js/canvas/workspace.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:23] "GET /js/ui/script_editor.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:23] "GET /js/ui/modals.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:23] "GET /js/ui/markdown_renderer.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:23] "GET /js/canvas/wires.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:23] "GET /js/canvas/interactions.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:23] "GET /js/simulation/expr_synthesizer.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:23] "GET /js/simulation/script_parser.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:23] "GET /js/simulation/expr_parser.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:56:23] "GET /api/modules HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/ui/app.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /css/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/simulation/simulation_engine.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/simulation/core.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/simulation/command_engine.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/simulation/serialization.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/simulation/modules.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/simulation/components.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/canvas/workspace.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/canvas/wires.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/simulation/expr_parser.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/ui/modals.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/canvas/interactions.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/ui/markdown_renderer.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/ui/script_editor.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/simulation/expr_synthesizer.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /js/simulation/script_parser.js HTTP/1.1" 200 -
+127.0.0.1 - - [19/Aug/2026 16:57:48] "GET /api/modules HTTP/1.1" 200 -

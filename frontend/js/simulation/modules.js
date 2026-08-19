@@ -1,6 +1,7 @@
 import { Component, Circuit, Pin, Wire } from "./core.js";
 import { createComponent } from "./components.js";
 import { SimulationEngine } from "./simulation_engine.js";
+import { findDefinitionByNameAndType } from "./serialization.js";
 
 /**
  * Definition of a reusable user-defined subcircuit.
@@ -16,8 +17,10 @@ export class ModuleDefinition {
      * @param {any[]} components - serialized inner components
      * @param {any[]} wires - serialized inner wires
      * @param {string} moduleType - "Module", "Cable", "Connector"
+     * @param {string} type
+     * @param {string[]} dependencies - array of child module names/IDs
      */
-    constructor(id, name, description, category, inputs, outputs, components, wires, moduleType = "Module", type = null) {
+    constructor(id, name, description, category, inputs, outputs, components, wires, moduleType = "Module", type = null, dependencies = []) {
         this.id = id;
         this.name = name;
         this.description = description;
@@ -28,6 +31,120 @@ export class ModuleDefinition {
         this.components = components; // serialized data
         this.wires = wires;           // serialized data
         this.moduleType = moduleType; // "Module", "Cable", "Connector"
+        this.dependencies = dependencies || [];
+    }
+}
+
+/**
+ * Dependency graph for managing relationships and compilation order of modules.
+ */
+export class ModuleDependencyGraph {
+    constructor() {
+        /** @type {Set<string>} */
+        this.nodes = new Set();
+        /** @type {Map<string, Set<string>>} */
+        this.adj = new Map();
+    }
+
+    addModule(name) {
+        if (!name) return;
+        const norm = name.trim();
+        this.nodes.add(norm);
+        if (!this.adj.has(norm)) {
+            this.adj.set(norm, new Set());
+        }
+    }
+
+    addDependency(fromModule, toModule) {
+        if (!fromModule || !toModule) return;
+        const normFrom = fromModule.trim();
+        const normTo = toModule.trim();
+        this.addModule(normFrom);
+        this.addModule(normTo);
+        this.adj.get(normFrom).add(normTo);
+    }
+
+    getDependencies(moduleName) {
+        const norm = moduleName.trim();
+        return Array.from(this.adj.get(norm) || []);
+    }
+
+    /**
+     * Detect cycle in dependency graph.
+     * @param {string} [startNode]
+     * @returns {string[]|null} Array of node names forming a cycle e.g. ["A", "B", "C", "A"], or null if no cycle.
+     */
+    detectCycle(startNode = null) {
+        const visited = new Set();
+        const recStack = new Set();
+        const path = [];
+
+        const searchNodes = startNode ? [startNode.trim()] : Array.from(this.nodes);
+
+        for (const root of searchNodes) {
+            if (!visited.has(root)) {
+                const result = this._dfsCycle(root, visited, recStack, path);
+                if (result) return result;
+            }
+        }
+        return null;
+    }
+
+    _dfsCycle(u, visited, recStack, path) {
+        visited.add(u);
+        recStack.add(u);
+        path.push(u);
+
+        const neighbors = this.adj.get(u) || new Set();
+        for (const v of neighbors) {
+            if (!visited.has(v)) {
+                const res = this._dfsCycle(v, visited, recStack, path);
+                if (res) return res;
+            } else if (recStack.has(v)) {
+                // Cycle found
+                const cycleStartIndex = path.indexOf(v);
+                const cyclePath = path.slice(cycleStartIndex);
+                cyclePath.push(v);
+                return cyclePath;
+            }
+        }
+
+        path.pop();
+        recStack.delete(u);
+        return null;
+    }
+
+    /**
+     * Get topological compilation order (dependencies before dependents).
+     * @returns {string[]}
+     */
+    getCompilationOrder() {
+        const cycle = this.detectCycle();
+        if (cycle) {
+            throw new Error(`Circular module dependency: ${cycle.join(" → ")}`);
+        }
+
+        const visited = new Set();
+        const order = [];
+
+        for (const node of this.nodes) {
+            if (!visited.has(node)) {
+                this._dfsTopo(node, visited, order);
+            }
+        }
+
+        return order;
+    }
+
+    _dfsTopo(u, visited, order) {
+        visited.add(u);
+        const neighbors = this.adj.get(u) || new Set();
+        for (const v of neighbors) {
+            if (!visited.has(v)) {
+                this._dfsTopo(v, visited, order);
+            }
+        }
+        order.push(u);
     }
 }
 
@@ -40,10 +157,12 @@ export class UserModule extends Component {
      * @param {ModuleDefinition} definition
      * @param {number} x
      * @param {number} y
+     * @param {ModuleRegistry} [registry]
      */
-    constructor(id, definition, x = 0, y = 0) {
+    constructor(id, definition, x = 0, y = 0, registry = null) {
         super(id, definition.name, x, y);
         this.definition = definition;
+        this.registry = registry;
         this.type = "UserModule";
 
         // Calculate dynamic dimensions based on pin count
@@ -128,9 +247,28 @@ export class UserModule extends Component {
 
         for (const compData of this.definition.components) {
             let comp;
-            if (compData.type === "UserModule" && compData.definition) {
-                // Nested user module!
-                comp = new UserModule(compData.id, compData.definition, compData.x, compData.y);
+            if (compData.type === "UserModule") {
+                // Look up child module definition
+                let childDef = compData.definition;
+                if (!childDef && this.registry) {
+                    if (compData.definitionId) {
+                        childDef = this.registry.get(compData.definitionId);
+                    }
+                    if (!childDef) {
+                        for (const d of this.registry.definitions.values()) {
+                            if (d.name.toLowerCase() === (compData.label || compData.id).toLowerCase()) {
+                                childDef = d;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (childDef) {
+                    comp = new UserModule(compData.id, childDef, compData.x, compData.y, this.registry);
+                } else {
+                    console.error(`Missing definition for nested custom module '${compData.id}'.`);
+                    comp = createComponent("Buffer", compData.id, compData.x, compData.y);
+                }
             } else {
                 comp = createComponent(compData.type, compData.id, compData.x, compData.y);
             }
@@ -292,6 +430,147 @@ export class UserModule extends Component {
         ctx.fillText(this.label || this.definition.name, 0, 0);
         ctx.restore();
     }
+}
+
+/**
+ * Detach a custom module instance, expanding its internal components and remapping external wires.
+ * @param {Circuit} circuit
+ * @param {UserModule} comp
+ * @param {ModuleRegistry} [registry]
+ */
+export function detachModuleInstance(circuit, comp, registry = null) {
+    if (!comp || comp.type !== "UserModule") {
+        throw new Error(`Component '${comp ? comp.id : "null"}' is not a custom module instance`);
+    }
+
+    const originX = comp.x;
+    const originY = comp.y;
+
+    // 1. Gather external wires connected to comp's input/output pins
+    const extInputPins = new Set(comp.inputs);
+    const extOutputPins = new Set(comp.outputs);
+
+    const extWiresToInputs = [];
+    const extWiresFromOutputs = [];
+
+    for (const wire of circuit.wires.values()) {
+        if (wire.toPin && extInputPins.has(wire.toPin)) {
+            extWiresToInputs.push(wire);
+        } else if (wire.fromPin && extOutputPins.has(wire.fromPin)) {
+            extWiresFromOutputs.push(wire);
+        }
+    }
+
+    // 2. Instantiate all internal components of the module onto circuit
+    const idMap = new Map();          // innerComp.id -> newComp
+    const inputsToGates = new Map();  // portName -> instantiated InputGate
+    const outputsToGates = new Map(); // portName -> instantiated OutputGate
+
+    for (const innerC of comp.definition.components) {
+        const newId = `${innerC.id}_${Math.random().toString(36).substring(2, 6)}`;
+
+        let newGate;
+        if (innerC.type === "UserModule") {
+            let childDef = innerC.definition;
+            if (!childDef && registry) {
+                if (innerC.definitionId) {
+                    childDef = registry.get(innerC.definitionId);
+                }
+                if (!childDef) {
+                    childDef = findDefinitionByNameAndType(registry, innerC.label || innerC.id, "Custom");
+                }
+            }
+            if (childDef) {
+                newGate = new UserModule(newId, childDef, originX + innerC.x, originY + innerC.y, registry);
+            } else {
+                newGate = createComponent("Buffer", newId, originX + innerC.x, originY + innerC.y);
+            }
+        } else {
+            newGate = createComponent(innerC.type, newId, originX + innerC.x, originY + innerC.y);
+        }
+
+        newGate.label = innerC.label || "";
+        circuit.addComponent(newGate);
+        idMap.set(innerC.id, newGate);
+
+        if (innerC.type === "Input") {
+            inputsToGates.set(innerC.label || innerC.id, newGate);
+        } else if (innerC.type === "Output") {
+            outputsToGates.set(innerC.label || innerC.id, newGate);
+        }
+    }
+
+    // 3. Re-create internal wires
+    const instantiatedIntWires = [];
+    const pinMap = new Map();
+    for (const [oldId, newGate] of idMap.entries()) {
+        newGate.pins().forEach(p => {
+            pinMap.set(`${oldId}_${p.name}`, p);
+            pinMap.set(`${oldId}.${p.name}`, p);
+        });
+    }
+
+    for (const innerW of comp.definition.wires) {
+        let fromPinObj = pinMap.get(innerW.fromPin);
+        let toPinObj = pinMap.get(innerW.toPin);
+
+        if (!fromPinObj || !toPinObj) {
+            const srcParts = innerW.fromPin.split(/[_.]/);
+            const dstParts = innerW.toPin.split(/[_.]/);
+            const srcComp = idMap.get(srcParts[0]);
+            const dstComp = idMap.get(dstParts[0]);
+            if (srcComp && dstComp) {
+                fromPinObj = srcComp.outputs.find(p => p.name === srcParts[srcParts.length - 1]) || srcComp.outputs[0];
+                toPinObj = dstComp.inputs.find(p => p.name === dstParts[dstParts.length - 1]) || dstComp.inputs[0];
+            }
+        }
+
+        if (fromPinObj && toPinObj) {
+            const newWireId = `wire_${Math.random().toString(36).substring(2, 9)}`;
+            const wireObj = new Wire(newWireId, fromPinObj, toPinObj, innerW.color || null);
+            circuit.addWire(wireObj);
+            instantiatedIntWires.push(wireObj);
+        }
+    }
+
+    // 4. Remap input wires
+    for (const [portName, inputGate] of inputsToGates.entries()) {
+        const matchingExtWires = extWiresToInputs.filter(w => w.toPin && w.toPin.name === portName);
+        const matchingIntWires = instantiatedIntWires.filter(w => w.fromPin && w.fromPin.component === inputGate);
+
+        if (matchingExtWires.length > 0 && matchingIntWires.length > 0) {
+            const sourcePin = matchingExtWires[0].fromPin;
+            for (const intW of matchingIntWires) {
+                intW.fromPin = sourcePin;
+            }
+            matchingExtWires.forEach(w => circuit.removeWire(w.id));
+            circuit.removeComponent(inputGate.id);
+        } else if (matchingExtWires.length > 0) {
+            matchingExtWires.forEach(w => circuit.removeWire(w.id));
+            circuit.removeComponent(inputGate.id);
+        }
+    }
+
+    // 5. Remap output wires
+    for (const [portName, outputGate] of outputsToGates.entries()) {
+        const matchingExtWires = extWiresFromOutputs.filter(w => w.fromPin && w.fromPin.name === portName);
+        const matchingIntWire = instantiatedIntWires.find(w => w.toPin && w.toPin.component === outputGate);
+
+        if (matchingExtWires.length > 0 && matchingIntWire) {
+            const intSourcePin = matchingIntWire.fromPin;
+            for (const extW of matchingExtWires) {
+                extW.fromPin = intSourcePin;
+            }
+            circuit.removeWire(matchingIntWire.id);
+            circuit.removeComponent(outputGate.id);
+        } else if (matchingExtWires.length > 0) {
+            matchingExtWires.forEach(w => circuit.removeWire(w.id));
+            circuit.removeComponent(outputGate.id);
+        }
+    }
+
+    // 6. Remove original module instance
+    circuit.removeComponent(comp.id);
 }
 
 /**

@@ -110,7 +110,8 @@ export function serializeCircuit(circuit, registry) {
                 outputs: def.outputs,
                 components: def.components,
                 wires: def.wires,
-                moduleType: def.moduleType || "Module"
+                moduleType: def.moduleType || "Module",
+                dependencies: def.dependencies || []
             });
         }
     }
@@ -161,7 +162,8 @@ export function deserializeCircuit(data, circuit, registry) {
                 defData.components,
                 defData.wires,
                 defData.moduleType || "Module",
-                defType
+                defType,
+                defData.dependencies || []
             );
             registry.register(def);
         }
@@ -176,7 +178,7 @@ export function deserializeCircuit(data, circuit, registry) {
         if (compData.type === "UserModule") {
             const def = registry ? registry.get(compData.definitionId) : null;
             if (def) {
-                comp = new UserModule(compData.id, def, compData.x, compData.y);
+                comp = new UserModule(compData.id, def, compData.x, compData.y, registry);
             } else {
                 console.error(`Missing definition '${compData.definitionId}' for custom module instance '${compData.id}'.`);
                 continue;

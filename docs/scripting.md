@@ -14,6 +14,9 @@ The `.sim` circuit scripting language allows you to create, modify, connect, and
 | `set` | `set NAME.PROP VALUE` | Modify component properties (`label`, `freq`, `buttonMode`, `rotation`, `flipX`, `flipY`, etc.). |
 | `remove` | `remove NAME` | Delete component `NAME` and automatically detach connected wires. |
 | `show` | `show NAME` / `show module NAME` | Display detailed inspection metadata for a component, bus, or module. |
+| `trace` | `trace PIN_REF` | Trace logical signal propagation path through module boundaries. |
+| `expand` | `expand NAME` | Inspect the internal component hierarchy tree (`├──`, `└──`) of a module. |
+| `detach` | `detach INSTANCE` | Detach/expand a module instance into individual gates on the circuit. |
 | `list` | `list` | List all components, buses, and wires in the active circuit. |
 | `net` | `net NAME` | Create a net signal node (buffer pass-through). |
 | `bus` | `bus NAME[START..END]` | Declare a first-class $N$-bit bus vector. |
@@ -50,8 +53,93 @@ External module pins are declared using `input NAME` and `output NAME`:
 The module body uses the existing scripting language (`add`, `move`, `connect`, `expr`, `for`, `bus`).
 When compiled, the subcircuit is validated for valid drivers, port connections, and dependency cycles.
 
+### Hierarchical Modules
+Modules can instantiate other user-defined modules to construct arbitrary N-level component hierarchies:
+
+```text
+module FADDER {
+    input A
+    input B
+    input Cin
+
+    output S
+    output Cout
+
+    expr S = (A XOR B) XOR Cin
+    expr Cout = (A AND B) OR (Cin AND (A XOR B))
+}
+
+module ADDER4 {
+    input A[0..3]
+    input B[0..3]
+    input Cin
+
+    output S[0..3]
+    output Cout
+
+    add FADDER FA0
+    add FADDER FA1
+    add FADDER FA2
+    add FADDER FA3
+
+    connect A[0] FA0.A
+    connect B[0] FA0.B
+    connect Cin FA0.Cin
+    connect FA0.S S[0]
+    connect FA0.Cout FA1.Cin
+
+    connect A[1] FA1.A
+    connect B[1] FA1.B
+    connect FA1.S S[1]
+    connect FA1.Cout FA2.Cin
+
+    connect A[2] FA2.A
+    connect B[2] FA2.B
+    connect FA2.S S[2]
+    connect FA2.Cout FA3.Cin
+
+    connect A[3] FA3.A
+    connect B[3] FA3.B
+    connect FA3.S S[3]
+    connect FA3.Cout Cout
+}
+```
+
+### Module Dependency Graph & Recursion Rejection
+An explicit dependency graph is maintained across all script-defined and registered modules.
+Compilation order is determined automatically using topological sorting, so declaration order in text files does not restrict module composition.
+Direct recursion (`add A X` inside `A`) and indirect circular module dependencies (`A → B → C → A`) are strictly rejected before partial modification occurs:
+```text
+Cannot compile module A.
+Circular module dependency: A → B → C → A
+```
+
+### Instance Arrays & Loops
+Modules support indexed instance arrays:
+```text
+for i in 0..3 {
+    add FADDER FA[i]
+    connect A[i] FA[i].A
+    connect B[i] FA[i].B
+}
+```
+Each instance (`FA[0]`, `FA[1]`, etc.) is a distinct simulator component with independent pins (`FA[0].A`, `FA[0].Cout`).
+
+### Hierarchical Pin References
+Pin references support dot notation across nested module boundaries:
+- `FA0.A`
+- `FA[0].Cout`
+- `RIPPLE.FA0.Cout` (nested multi-level reference)
+
+### Inspection, Tracing & Debugging Commands
+- `show module ADDER4`: Displays module metadata, vector port ranges, internal instances, and explicit dependencies.
+- `show FA0`: Displays instance type, position, flip state, ports with live signal values, and wire connections.
+- `trace FA0.Cout`: Traces logical signal propagation through module boundaries, outputting the path chain (`FA0.Cout ↓ FA1.Cin ↓ FA1.Cout ↓ Cout`).
+- `expand ADDER4`: Displays an ASCII tree representation (`├──`, `└──`) of internal components and wire links.
+- `detach FA0`: Expands module instance `FA0` into its constituent gates and wires directly on the circuit canvas without leaving stale references.
+
 ### Restrictions
-- Direct recursion (`add FullAdder FA` inside `FullAdder`) and indirect circular module dependencies are rejected.
+- Direct recursion and indirect circular module dependencies are rejected.
 - Compilation errors identify the module name and failing line number.
 - Scripted modules are integrated with the visual Custom Parts library and can be placed, moved, flipped, saved, and loaded.
 

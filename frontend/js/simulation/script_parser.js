@@ -11,7 +11,7 @@
  */
 
 import { Circuit, Wire, Bus } from "./core.js";
-import { ModuleDefinition } from "./modules.js";
+import { ModuleDefinition, ModuleDependencyGraph } from "./modules.js";
 import { serializeCircuit, findDefinitionByNameAndType } from "./serialization.js";
 
 const MAX_NESTING_DEPTH = 5;
@@ -403,37 +403,60 @@ export function expandScript(scriptText) {
 }
 
 /**
- * Check if targetModule appears anywhere in the dependency hierarchy of testDef.
- * @param {ModuleDefinition} testDef
- * @param {string} targetModuleName
- * @param {ModuleRegistry} registry
- * @param {Set<string>} visited
- * @returns {boolean}
+ * Build a dependency graph for a set of script module blocks and existing registered modules.
+ * @param {Array<{ name: string, startLine: number, rawBodyText: string }>} moduleDefs
+ * @param {ModuleRegistry} [registry]
+ * @returns {ModuleDependencyGraph}
  */
-function hasDependencyCycle(testDef, targetModuleName, registry, visited = new Set()) {
-    if (!testDef) return false;
-    if (visited.has(testDef.id)) return false;
-    visited.add(testDef.id);
+export function buildScriptModuleDependencyGraph(moduleDefs, registry) {
+    const graph = new ModuleDependencyGraph();
 
-    if (testDef.name.toLowerCase() === targetModuleName.toLowerCase()) {
-        return true;
+    const moduleMap = new Map();
+    for (const mDef of moduleDefs) {
+        moduleMap.set(mDef.name.toLowerCase(), mDef);
+        graph.addModule(mDef.name);
     }
 
-    for (const compData of testDef.components || []) {
-        if (compData.type === "UserModule" && compData.definitionId) {
-            const childDef = registry ? registry.get(compData.definitionId) : null;
-            if (childDef) {
-                if (childDef.name.toLowerCase() === targetModuleName.toLowerCase()) {
-                    return true;
-                }
-                if (hasDependencyCycle(childDef, targetModuleName, registry, visited)) {
-                    return true;
+    if (registry) {
+        for (const regDef of registry.definitions.values()) {
+            graph.addModule(regDef.name);
+            for (const depName of regDef.dependencies || []) {
+                graph.addDependency(regDef.name, depName);
+            }
+        }
+    }
+
+    for (const mDef of moduleDefs) {
+        let expandedBody;
+        try {
+            expandedBody = expandScript(mDef.rawBodyText);
+        } catch (e) {
+            continue;
+        }
+
+        for (const item of expandedBody) {
+            const parts = item.command.trim().split(/\s+/);
+            if (parts.length >= 3 && parts[0].toLowerCase() === "add") {
+                const rawTypeStr = parts.slice(1, -1).join(" ").trim();
+                const lowerType = rawTypeStr.toLowerCase();
+
+                if (lowerType === mDef.name.toLowerCase()) {
+                    graph.addDependency(mDef.name, mDef.name);
+                } else if (moduleMap.has(lowerType)) {
+                    const targetMDef = moduleMap.get(lowerType);
+                    graph.addDependency(mDef.name, targetMDef.name);
+                } else if (registry) {
+                    for (const existingDef of registry.definitions.values()) {
+                        if (existingDef.name.toLowerCase() === lowerType) {
+                            graph.addDependency(mDef.name, existingDef.name);
+                        }
+                    }
                 }
             }
         }
     }
 
-    return false;
+    return graph;
 }
 
 /**
@@ -533,18 +556,7 @@ export function compileModuleDefinition(moduleName, rawBodyText, startLine, regi
         if (verb === "add") {
             const rawTypeStr = parts.slice(1, -1).join(" ").trim();
             if (rawTypeStr.toLowerCase() === moduleName.toLowerCase()) {
-                throw new Error(`Module ${moduleName}:\nLine ${lineNum}:\nCannot instantiate module '${moduleName}' recursively`);
-            }
-
-            // Check indirect recursion
-            if (registry) {
-                for (const existingDef of registry.definitions.values()) {
-                    if (existingDef.name.toLowerCase() === rawTypeStr.toLowerCase()) {
-                        if (hasDependencyCycle(existingDef, moduleName, registry)) {
-                            throw new Error(`Module ${moduleName}:\nLine ${lineNum}:\nRecursive module dependency detected involving '${existingDef.name}'`);
-                        }
-                    }
-                }
+                throw new Error(`Cannot compile module ${moduleName}.\nCircular module dependency: ${moduleName} → ${moduleName} (cannot instantiate module '${moduleName}' recursively)`);
             }
         }
 
@@ -588,6 +600,13 @@ export function compileModuleDefinition(moduleName, rawBodyText, startLine, regi
 
     const modId = `mod_${moduleName.toLowerCase().replace(/[^a-z0-9_]/g, "_")}`;
 
+    const dependenciesSet = new Set();
+    for (const comp of tempCircuit.components.values()) {
+        if (comp.type === "UserModule" && comp.definition) {
+            dependenciesSet.add(comp.definition.name);
+        }
+    }
+
     const def = new ModuleDefinition(
         modId,
         moduleName,
@@ -598,7 +617,8 @@ export function compileModuleDefinition(moduleName, rawBodyText, startLine, regi
         serialized.components,
         serialized.wires,
         "Module",
-        "Custom"
+        "Custom",
+        Array.from(dependenciesSet)
     );
 
     return def;

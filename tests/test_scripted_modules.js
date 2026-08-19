@@ -490,4 +490,378 @@ function createTestSetup() {
     console.log("  ✓ Module introspection via `show module` passed");
 }
 
+// 14. Hierarchical Modules (2-level & 3-level) and Out-of-Order Compilation
+{
+    const { registry, cmdEngine } = createTestSetup();
+    // ADDER4 appears BEFORE FADDER in text order to test topological sort
+    const script = `
+        module ADDER4 {
+            input A[0..3]
+            input B[0..3]
+            input Cin
+
+            output S[0..3]
+            output Cout
+
+            add FADDER FA0
+            add FADDER FA1
+            add FADDER FA2
+            add FADDER FA3
+
+            connect A[0] -> FA0.A
+            connect B[0] -> FA0.B
+            connect Cin -> FA0.Cin
+            connect FA0.S -> S[0]
+            connect FA0.Cout -> FA1.Cin
+
+            connect A[1] -> FA1.A
+            connect B[1] -> FA1.B
+            connect FA1.S -> S[1]
+            connect FA1.Cout -> FA2.Cin
+
+            connect A[2] -> FA2.A
+            connect B[2] -> FA2.B
+            connect FA2.S -> S[2]
+            connect FA2.Cout -> FA3.Cin
+
+            connect A[3] -> FA3.A
+            connect B[3] -> FA3.B
+            connect FA3.S -> S[3]
+            connect FA3.Cout -> Cout
+        }
+
+        module FADDER {
+            input A
+            input B
+            input Cin
+
+            output S
+            output Cout
+
+            expr S = A XOR B XOR Cin
+            expr Cout = (A AND B) OR (Cin AND (A XOR B))
+        }
+
+        module MATH_UNIT {
+            input A[0..3]
+            input B[0..3]
+            input Cin
+            output S[0..3]
+            output Cout
+
+            add ADDER4 ADD0
+            connect A -> ADD0.A
+            connect B -> ADD0.B
+            connect Cin -> ADD0.Cin
+            connect ADD0.S -> S
+            connect ADD0.Cout -> Cout
+        }
+    `;
+
+    const res = cmdEngine.executeScript(script);
+    assert.strictEqual(res.success, true, res.error);
+
+    assert.ok(registry.get("mod_fadder"));
+    assert.ok(registry.get("mod_adder4"));
+    assert.ok(registry.get("mod_math_unit"));
+
+    const adder4Def = registry.get("mod_adder4");
+    assert.ok(adder4Def.dependencies.includes("FADDER"));
+    console.log("  ✓ Hierarchical modules (2-level & 3-level) out-of-order compilation passed");
+}
+
+// 15. Complete 512-case Electrical Truth Table Verification for ADDER4 (Nested FADDERs)
+{
+    const { circuit, engine, cmdEngine } = createTestSetup();
+    const script = `
+        module FADDER {
+            input A
+            input B
+            input Cin
+
+            output S
+            output Cout
+
+            expr S = A XOR B XOR Cin
+            expr Cout = (A AND B) OR (Cin AND (A XOR B))
+        }
+
+        module ADDER4 {
+            input A[0..3]
+            input B[0..3]
+            input Cin
+
+            output S[0..3]
+            output Cout
+
+            add FADDER FA0
+            add FADDER FA1
+            add FADDER FA2
+            add FADDER FA3
+
+            connect A[0] -> FA0.A
+            connect B[0] -> FA0.B
+            connect Cin -> FA0.Cin
+            connect FA0.S -> S[0]
+            connect FA0.Cout -> FA1.Cin
+
+            connect A[1] -> FA1.A
+            connect B[1] -> FA1.B
+            connect FA1.S -> S[1]
+            connect FA1.Cout -> FA2.Cin
+
+            connect A[2] -> FA2.A
+            connect B[2] -> FA2.B
+            connect FA2.S -> S[2]
+            connect FA2.Cout -> FA3.Cin
+
+            connect A[3] -> FA3.A
+            connect B[3] -> FA3.B
+            connect FA3.S -> S[3]
+            connect FA3.Cout -> Cout
+        }
+
+        add input Cin
+        add ADDER4 ADD0
+        add output Cout
+
+        connect Cin -> ADD0.Cin
+        connect ADD0.Cout -> Cout
+
+        for i in 0..3 {
+            add input A[i]
+            add input B[i]
+            add output S[i]
+
+            connect A[i] -> ADD0.A[i]
+            connect B[i] -> ADD0.B[i]
+            connect ADD0.S[i] -> S[i]
+        }
+    `;
+
+    const res = cmdEngine.executeScript(script);
+    assert.strictEqual(res.success, true, res.error);
+
+    let testCasesPassed = 0;
+    const cinComp = circuit.components.get("Cin");
+    const coutComp = circuit.components.get("Cout");
+
+    for (let cVal = 0; cVal <= 1; cVal++) {
+        cinComp.stateValue = cVal;
+        engine.triggerInputToggle(cinComp);
+
+        for (let aVal = 0; aVal < 16; aVal++) {
+            for (let bVal = 0; bVal < 16; bVal++) {
+                for (let i = 0; i < 4; i++) {
+                    const gA = circuit.components.get(`A[${i}]`);
+                    const gB = circuit.components.get(`B[${i}]`);
+
+                    gA.stateValue = (aVal >> i) & 1;
+                    gB.stateValue = (bVal >> i) & 1;
+
+                    engine.triggerInputToggle(gA);
+                    engine.triggerInputToggle(gB);
+                }
+
+                let sumBits = 0;
+                for (let i = 0; i < 4; i++) {
+                    const bit = circuit.components.get(`S[${i}]`).inputs[0].value;
+                    sumBits |= (bit << i);
+                }
+                const actualCout = coutComp.inputs[0].value;
+
+                const expectedTotal = aVal + bVal + cVal;
+                const actualTotal = sumBits + (actualCout << 4);
+
+                assert.strictEqual(actualTotal, expectedTotal, `ADDER4 failure for A=${aVal}, B=${bVal}, Cin=${cVal}: expected ${expectedTotal}, got ${actualTotal}`);
+                testCasesPassed++;
+            }
+        }
+    }
+
+    assert.strictEqual(testCasesPassed, 512);
+    console.log("  ✓ Complete 512-case Electrical Truth Table for ADDER4 (Nested FADDERs) passed (512/512)");
+}
+
+// 16. Inspection, Tracing & Expansion Commands (`show`, `trace`, `expand`)
+{
+    const { cmdEngine } = createTestSetup();
+    const script = `
+        module FADDER {
+            input A
+            input B
+            input Cin
+            output S
+            output Cout
+
+            expr S = A XOR B XOR Cin
+            expr Cout = (A AND B) OR (Cin AND (A XOR B))
+        }
+
+        module ADDER4 {
+            input A[0..3]
+            input B[0..3]
+            input Cin
+            output S[0..3]
+            output Cout
+
+            for i in 0..3 {
+                add FADDER FA[i]
+                connect A[i] -> FA[i].A
+                connect B[i] -> FA[i].B
+                connect FA[i].S -> S[i]
+            }
+
+            connect Cin -> FA[0].Cin
+            connect FA[0].Cout -> FA[1].Cin
+            connect FA[1].Cout -> FA[2].Cin
+            connect FA[2].Cout -> FA[3].Cin
+            connect FA[3].Cout -> Cout
+        }
+
+        add input Cin
+        add ADDER4 ADD0
+        connect Cin -> ADD0.Cin
+    `;
+
+    const res = cmdEngine.executeScript(script);
+    assert.strictEqual(res.success, true, res.error);
+
+    // 1. show module ADDER4
+    const showModRes = cmdEngine.execute("show module ADDER4");
+    assert.strictEqual(showModRes.success, true);
+    assert.ok(showModRes.data.includes("Module: ADDER4"));
+    assert.ok(showModRes.data.includes("Dependencies:"));
+    assert.ok(showModRes.data.includes("FADDER"));
+
+    // 2. show ADD0
+    const showInstRes = cmdEngine.execute("show ADD0");
+    assert.strictEqual(showInstRes.success, true);
+    assert.ok(showInstRes.data.includes("Instance: ADD0"));
+    assert.ok(showInstRes.data.includes("Type: ADDER4"));
+
+    // 3. trace ADD0.Cin
+    const traceRes = cmdEngine.execute("trace ADD0.Cin");
+    assert.strictEqual(traceRes.success, true);
+    assert.ok(traceRes.data.includes("Cin"));
+
+    // 4. expand ADDER4
+    const expandRes = cmdEngine.execute("expand ADDER4");
+    assert.strictEqual(expandRes.success, true);
+    assert.ok(expandRes.data.includes("ADDER4"));
+
+    console.log("  ✓ Inspection, Tracing & Expansion commands (`show`, `trace`, `expand`) passed");
+}
+
+// 17. Detachment Regression Testing (Nested modules with multiple external wires)
+{
+    const { circuit, engine, cmdEngine, registry } = createTestSetup();
+    const script = `
+        module FADDER {
+            input A
+            input B
+            input Cin
+
+            output S
+            output Cout
+
+            expr S = A XOR B XOR Cin
+            expr Cout = (A AND B) OR (Cin AND (A XOR B))
+        }
+
+        module ADDER2 {
+            input A[0..1]
+            input B[0..1]
+            input Cin
+
+            output S[0..1]
+            output Cout
+
+            add FADDER FA0
+            add FADDER FA1
+
+            connect A[0] -> FA0.A
+            connect B[0] -> FA0.B
+            connect Cin -> FA0.Cin
+            connect FA0.S -> S[0]
+            connect FA0.Cout -> FA1.Cin
+
+            connect A[1] -> FA1.A
+            connect B[1] -> FA1.B
+            connect FA1.S -> S[1]
+            connect FA1.Cout -> Cout
+        }
+
+        add input InCin
+        add input InA0
+        add input InA1
+        add input InB0
+        add input InB1
+
+        add ADDER2 ADD0
+
+        add output OutS0
+        add output OutS1
+        add output OutCout
+
+        connect InCin -> ADD0.Cin
+        connect InA0 -> ADD0.A[0]
+        connect InA1 -> ADD0.A[1]
+        connect InB0 -> ADD0.B[0]
+        connect InB1 -> ADD0.B[1]
+
+        connect ADD0.S[0] -> OutS0
+        connect ADD0.S[1] -> OutS1
+        connect ADD0.Cout -> OutCout
+    `;
+
+    const res = cmdEngine.executeScript(script);
+    assert.strictEqual(res.success, true, res.error);
+
+    // Set inputs: 2 + 3 + 1 = 6 -> S1=1, S0=1, Cout=0 (sum 3, carry 0 -> total 3 + 3 = 6)
+    // A = 2 (A1=1, A0=0), B = 3 (B1=1, B0=1), Cin = 1
+    circuit.components.get("InCin").stateValue = 1;
+    circuit.components.get("InA1").stateValue = 1;
+    circuit.components.get("InA0").stateValue = 0;
+    circuit.components.get("InB1").stateValue = 1;
+    circuit.components.get("InB0").stateValue = 1;
+
+    engine.evaluateAll();
+
+    const s0Before = circuit.components.get("OutS0").inputs[0].value;
+    const s1Before = circuit.components.get("OutS1").inputs[0].value;
+    const coutBefore = circuit.components.get("OutCout").inputs[0].value;
+
+    assert.strictEqual(s0Before, 0); // 0 + 1 + 1 = 2 -> S0=0, C=1
+    assert.strictEqual(s1Before, 1); // 1 + 1 + 1 = 3 -> S1=1, Cout=1
+    assert.strictEqual(coutBefore, 1);
+
+    // Now execute detach ADD0
+    const detachRes = cmdEngine.execute("detach ADD0");
+    assert.strictEqual(detachRes.success, true, detachRes.error);
+
+    assert.strictEqual(circuit.components.has("ADD0"), false, "ADD0 instance should be removed");
+
+    // Re-verify electrical results after detachment
+    engine.evaluateAll();
+
+    const s0After = circuit.components.get("OutS0").inputs[0].value;
+    const s1After = circuit.components.get("OutS1").inputs[0].value;
+    const coutAfter = circuit.components.get("OutCout").inputs[0].value;
+
+    assert.strictEqual(s0After, s0Before, "S0 state must remain identical after detachment");
+    assert.strictEqual(s1After, s1Before, "S1 state must remain identical after detachment");
+    assert.strictEqual(coutAfter, coutBefore, "Cout state must remain identical after detachment");
+
+    // Verify all wires terminate at valid component pins
+    for (const wire of circuit.wires.values()) {
+        assert.ok(wire.fromPin && wire.fromPin.component, "Wire fromPin must be valid");
+        assert.ok(wire.toPin && wire.toPin.component, "Wire toPin must be valid");
+        assert.ok(circuit.components.has(wire.fromPin.component.id), "fromPin component must exist on circuit");
+        assert.ok(circuit.components.has(wire.toPin.component.id), "toPin component must exist on circuit");
+    }
+
+    console.log("  ✓ Detachment regression testing for nested modules passed");
+}
+
 console.log("All Scripted Modules unit tests passed successfully!");

@@ -1,10 +1,10 @@
 import { createComponent, COMPONENT_REGISTRY } from "./components.js";
 import { Circuit, Wire, Bus } from "./core.js";
-import { UserModule } from "./modules.js";
+import { UserModule, detachModuleInstance } from "./modules.js";
 import { serializeCircuit, deserializeCircuit } from "./serialization.js";
 import { parseBooleanExpression } from "./expr_parser.js";
 import { synthesizeExpression } from "./expr_synthesizer.js";
-import { expandScript, compileModuleDefinition } from "./script_parser.js";
+import { expandScript, compileModuleDefinition, buildScriptModuleDependencyGraph } from "./script_parser.js";
 import { SimulationEngine } from "./simulation_engine.js";
 import { findDefinitionByNameAndType } from "./serialization.js";
 
@@ -132,6 +132,12 @@ export class CommandEngine {
                     return this._handleRedo();
                 case "expr":
                     return this._handleExpr(trimmed);
+                case "trace":
+                    return this._handleTrace(parts.slice(1).join(" "));
+                case "expand":
+                    return this._handleExpand(parts[1]);
+                case "detach":
+                    return this._handleDetach(parts[1]);
                 default:
                     return { success: false, error: `Unknown command '${parts[0]}'` };
             }
@@ -271,7 +277,7 @@ export class CommandEngine {
         // Create component at default position (100, 100) or center
         let comp;
         if (actualType === "UserModule" && customDef) {
-            comp = new UserModule(name, customDef, 100, 100);
+            comp = new UserModule(name, customDef, 100, 100, this.registry);
         } else {
             comp = createComponent(actualType, name, 100, 100);
         }
@@ -362,10 +368,65 @@ export class CommandEngine {
         return { success: true, message: `Successfully created net '${name}'` };
     }
 
+    _resolveHierarchicalRef(ref, pinType) {
+        if (!ref) return null;
+
+        // Check top-level component directly first
+        if (this.circuit.components.has(ref)) {
+            const comp = this.circuit.components.get(ref);
+            const pin = this._findPin(comp, null, pinType);
+            return { comp, pin, circuit: this.circuit };
+        }
+
+        const parts = ref.split(".");
+        if (parts.length === 1) {
+            const comp = this.circuit.components.get(parts[0]);
+            if (!comp) return null;
+            const pin = this._findPin(comp, null, pinType);
+            return { comp, pin, circuit: this.circuit };
+        }
+
+        // Try single level component.pin
+        if (parts.length === 2) {
+            const compName = parts[0];
+            const pinName = parts[1];
+            const comp = this.circuit.components.get(compName);
+            if (comp) {
+                const pin = this._findPin(comp, pinName, pinType);
+                if (pin) return { comp, pin, circuit: this.circuit };
+            }
+        }
+
+        // Multi-level traversal (e.g. RIPPLE.FA0.Cout)
+        let currCircuit = this.circuit;
+        let currComp = null;
+
+        for (let i = 0; i < parts.length - 1; i++) {
+            const part = parts[i];
+            currComp = currCircuit.components.get(part);
+            if (!currComp) return null;
+
+            if (i < parts.length - 2) {
+                if (currComp.type === "UserModule" && currComp.innerCircuit) {
+                    currCircuit = currComp.innerCircuit;
+                } else {
+                    return null;
+                }
+            }
+        }
+
+        if (currComp) {
+            const targetPinName = parts[parts.length - 1];
+            const pin = this._findPin(currComp, targetPinName, pinType);
+            if (pin) return { comp: currComp, pin, circuit: currCircuit };
+        }
+
+        return null;
+    }
+
     _handleConnect(parts, original) {
         // Syntax:
         // connect FROM TO OR connect FROM -> TO
-        // Filter out optional arrow tokens if present
         const filteredParts = parts.filter(p => p !== "->" && p !== "=>");
         if (filteredParts.length < 3) {
             return { success: false, error: "Syntax: connect FROM TO (e.g. connect CLK.out G1.A)" };
@@ -416,29 +477,24 @@ export class CommandEngine {
             return lastRes;
         }
 
-        const fromComp = this.circuit.components.get(fromCompName);
-        if (!fromComp) {
-            return { success: false, error: `Unknown component or net '${fromCompName}'` };
+        const resolvedFrom = this._resolveHierarchicalRef(fromRef, "output");
+        if (!resolvedFrom || !resolvedFrom.pin) {
+            return { success: false, error: `Unknown component, net, or output pin '${fromRef}'` };
         }
 
-        const toComp = this.circuit.components.get(toCompName);
-        if (!toComp) {
-            return { success: false, error: `Unknown component or net '${toCompName}'` };
+        const resolvedTo = this._resolveHierarchicalRef(toRef, "input");
+        if (!resolvedTo || !resolvedTo.pin) {
+            return { success: false, error: `Unknown component, net, or input pin '${toRef}'` };
         }
+
+        const fromComp = resolvedFrom.comp;
+        const fromPin = resolvedFrom.pin;
+        const toComp = resolvedTo.comp;
+        const toPin = resolvedTo.pin;
+        const targetCircuit = resolvedTo.circuit || this.circuit;
 
         if (fromComp === toComp) {
             return { success: false, error: "Cannot connect a component to itself" };
-        }
-
-        // Find pins using flexible lookup
-        const fromPin = this._findPin(fromComp, fromPinName, "output");
-        if (!fromPin) {
-            return { success: false, error: `Unknown pin '${fromPinName || "output"}' on component '${fromCompName}'` };
-        }
-
-        const toPin = this._findPin(toComp, toPinName, "input");
-        if (!toPin) {
-            return { success: false, error: `Unknown pin '${toPinName || "input"}' on component '${toCompName}'` };
         }
 
         // Validate directions: FROM must be output, TO must be input
@@ -664,17 +720,70 @@ export class CommandEngine {
             return { success: false, error: `Unknown module '${moduleName}'` };
         }
 
+        const formatPortList = (portList) => {
+            const grouped = [];
+            const processed = new Set();
+
+            for (const p of portList) {
+                if (processed.has(p)) continue;
+                const match = p.match(/^([a-zA-Z][a-zA-Z0-9_]*)\[(\d+)\]$/);
+                if (match) {
+                    const base = match[1];
+                    const indices = [];
+                    for (const other of portList) {
+                        const m = other.match(/^([a-zA-Z][a-zA-Z0-9_]*)\[(\d+)\]$/);
+                        if (m && m[1] === base) {
+                            indices.push(parseInt(m[2], 10));
+                            processed.add(other);
+                        }
+                    }
+                    if (indices.length > 1) {
+                        const minIdx = Math.min(...indices);
+                        const maxIdx = Math.max(...indices);
+                        grouped.push(`${base}[${minIdx}..${maxIdx}]`);
+                    } else {
+                        grouped.push(p);
+                        processed.add(p);
+                    }
+                } else {
+                    grouped.push(p);
+                    processed.add(p);
+                }
+            }
+            return grouped;
+        };
+
+        const inputsFormatted = formatPortList(foundDef.inputs);
+        const outputsFormatted = formatPortList(foundDef.outputs);
+
+        const instances = [];
+        for (const comp of foundDef.components) {
+            if (comp.type === "UserModule") {
+                const typeName = comp.definition ? comp.definition.name : (comp.definitionId || comp.type);
+                instances.push(`  ${comp.id} : ${typeName}`);
+            } else if (comp.type !== "Input" && comp.type !== "Output") {
+                instances.push(`  ${comp.id} : ${comp.type}`);
+            }
+        }
+
+        const deps = foundDef.dependencies && foundDef.dependencies.length > 0
+            ? foundDef.dependencies.map(d => `  ${d}`)
+            : ["  (none)"];
+
         const lines = [
             `Module: ${foundDef.name}`,
             "",
             "Inputs:",
-            ...(foundDef.inputs.length > 0 ? foundDef.inputs.map(i => `  - ${i}`) : ["  (none)"]),
+            ...(inputsFormatted.length > 0 ? inputsFormatted.map(i => `  ${i}`) : ["  (none)"]),
             "",
             "Outputs:",
-            ...(foundDef.outputs.length > 0 ? foundDef.outputs.map(o => `  - ${o}`) : ["  (none)"]),
+            ...(outputsFormatted.length > 0 ? outputsFormatted.map(o => `  ${o}`) : ["  (none)"]),
             "",
-            "Internal components:",
-            ...(foundDef.components.length > 0 ? foundDef.components.map(c => `  - ${c.id} (${c.type})`) : ["  (none)"])
+            "Instances:",
+            ...(instances.length > 0 ? instances : ["  (none)"]),
+            "",
+            "Dependencies:",
+            ...deps
         ];
 
         const output = lines.join("\n");
@@ -704,9 +813,54 @@ export class CommandEngine {
             return { success: true, data: output, message: output };
         }
 
-        const comp = this.circuit.components.get(name);
+        const res = this._resolveHierarchicalRef(name, null);
+        const comp = res ? res.comp : this.circuit.components.get(name);
+
         if (!comp) {
             return { success: false, error: `Unknown component or bus '${name}'` };
+        }
+
+        if (comp.type === "UserModule") {
+            const defName = comp.definition ? comp.definition.name : "UserModule";
+            const props = [
+                `Instance: ${comp.id}`,
+                `Type: ${defName}`,
+                `Position: (${comp.x}, ${comp.y})`,
+                `Flip: H=${comp.flipX ? "yes" : "no"}, V=${comp.flipY ? "yes" : "no"}`,
+                "",
+                "Inputs:"
+            ];
+
+            comp.inputs.forEach(p => {
+                props.push(`  ${p.name} = ${p.value}`);
+            });
+
+            props.push("", "Outputs:");
+            comp.outputs.forEach(p => {
+                props.push(`  ${p.name} = ${p.value}`);
+            });
+
+            props.push("", "Connections:");
+            const parentCircuit = res.circuit || this.circuit;
+            let connCount = 0;
+
+            for (const wire of parentCircuit.wires.values()) {
+                if (wire.toPin && wire.toPin.component === comp) {
+                    const srcComp = wire.fromPin.component;
+                    props.push(`  ${wire.toPin.name}: ${srcComp.id}.${wire.fromPin.name}`);
+                    connCount++;
+                } else if (wire.fromPin && wire.fromPin.component === comp) {
+                    const dstComp = wire.toPin.component;
+                    props.push(`  ${wire.fromPin.name} -> ${dstComp.id}.${wire.toPin.name}`);
+                    connCount++;
+                }
+            }
+            if (connCount === 0) {
+                props.push("  (none)");
+            }
+
+            const output = props.join("\n");
+            return { success: true, data: output, message: output };
         }
 
         const props = [
@@ -733,6 +887,155 @@ export class CommandEngine {
 
         const output = props.join("\n");
         return { success: true, data: output, message: output };
+    }
+
+    _handleTrace(pinRef) {
+        if (!pinRef) {
+            return { success: false, error: "Syntax: trace PIN_REFERENCE (e.g. trace FA0.Cout)" };
+        }
+
+        const res = this._resolveHierarchicalRef(pinRef, null);
+        if (!res || !res.pin) {
+            return { success: false, error: `Unknown pin reference '${pinRef}'` };
+        }
+
+        const path = [pinRef];
+        const visitedWires = new Set();
+
+        let currPin = res.pin;
+        let currComp = res.comp;
+        let currCircuit = res.circuit || this.circuit;
+
+        let depth = 0;
+        while (currPin && depth < 20) {
+            depth++;
+            if (currPin.type === "output") {
+                const wire = Array.from(currCircuit.wires.values()).find(w => w.fromPin === currPin && !visitedWires.has(w.id));
+                if (wire) {
+                    visitedWires.add(wire.id);
+                    const nextPin = wire.toPin;
+                    const nextComp = nextPin.component;
+                    const nextRef = `${nextComp.id}.${nextPin.name}`;
+                    path.push(nextRef);
+
+                    if (nextComp.type === "Output" && currComp.type === "UserModule") {
+                        const extOutputPin = currComp.outputs.find(p => p.name === (nextComp.label || nextComp.id));
+                        if (extOutputPin) {
+                            path.push(`${currComp.id}.${extOutputPin.name}`);
+                            currPin = extOutputPin;
+                            currComp = currComp;
+                            currCircuit = this.circuit;
+                            continue;
+                        }
+                    } else if (nextComp.type === "UserModule") {
+                        const innerInputGate = nextComp.internalInputsMap ? nextComp.internalInputsMap.get(nextPin.name) : null;
+                        if (innerInputGate) {
+                            currPin = innerInputGate.outputs[0];
+                            currComp = innerInputGate;
+                            currCircuit = nextComp.innerCircuit;
+                            continue;
+                        }
+                    }
+                    currPin = nextPin;
+                    currComp = nextComp;
+                } else {
+                    break;
+                }
+            } else if (currPin.type === "input") {
+                const wire = Array.from(currCircuit.wires.values()).find(w => w.toPin === currPin && !visitedWires.has(w.id));
+                if (wire) {
+                    visitedWires.add(wire.id);
+                    const nextPin = wire.fromPin;
+                    const nextComp = nextPin.component;
+                    const nextRef = `${nextComp.id}.${nextPin.name}`;
+                    path.unshift(nextRef);
+                    currPin = nextPin;
+                    currComp = nextComp;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        const formatted = path.join("\n↓\n");
+        return { success: true, data: formatted, message: formatted };
+    }
+
+    _handleExpand(target) {
+        if (!target) {
+            return { success: false, error: "Syntax: expand MODULE_NAME_OR_INSTANCE" };
+        }
+
+        let foundDef = null;
+        if (this.registry) {
+            for (const def of this.registry.definitions.values()) {
+                if (def.name.toLowerCase() === target.toLowerCase() || def.id.toLowerCase() === target.toLowerCase()) {
+                    foundDef = def;
+                    break;
+                }
+            }
+        }
+
+        const instanceComp = this.circuit.components.get(target);
+        if (instanceComp && instanceComp.type === "UserModule") {
+            foundDef = instanceComp.definition;
+        }
+
+        if (!foundDef) {
+            return { success: false, error: `Unknown module or instance '${target}'` };
+        }
+
+        const lines = [foundDef.name];
+
+        const subComps = foundDef.components.filter(c => c.type !== "Input" && c.type !== "Output");
+        subComps.forEach((comp, idx) => {
+            const isLast = idx === subComps.length - 1;
+            const prefix = isLast ? "└── " : "├── ";
+            let typeName = comp.type;
+            if (comp.type === "UserModule" && comp.definition) {
+                typeName = comp.definition.name;
+            } else if (comp.definitionId) {
+                const childDef = this.registry ? this.registry.get(comp.definitionId) : null;
+                if (childDef) typeName = childDef.name;
+            }
+            lines.push(`${prefix}${comp.id} : ${typeName}`);
+        });
+
+        if (foundDef.wires && foundDef.wires.length > 0) {
+            lines.push("", "Connections:");
+            foundDef.wires.forEach(w => {
+                lines.push(`  ${w.fromPin} -> ${w.toPin}`);
+            });
+        }
+
+        const output = lines.join("\n");
+        return { success: true, data: output, message: output };
+    }
+
+    _handleDetach(instanceName) {
+        if (!instanceName) {
+            return { success: false, error: "Syntax: detach INSTANCE_NAME" };
+        }
+
+        const comp = this.circuit.components.get(instanceName);
+        if (!comp) {
+            return { success: false, error: `Unknown component '${instanceName}'` };
+        }
+
+        if (comp.type !== "UserModule") {
+            return { success: false, error: `Component '${instanceName}' is not a custom module instance` };
+        }
+
+        try {
+            detachModuleInstance(this.circuit, comp, this.registry);
+            if (this.engine) {
+                this.engine.evaluateAll();
+            }
+            this._saveHistory();
+            return { success: true, message: `Successfully detached module instance '${instanceName}'` };
+        } catch (e) {
+            return { success: false, error: `Detach failed: ${e.message}` };
+        }
     }
 
     _handleUndo() {
@@ -917,14 +1220,64 @@ export class CommandEngine {
         this.inTransaction = true;
         let executedCount = 0;
 
-        for (const item of expandedList) {
-            if (item.moduleDef) {
-                // Handle module compilation
+        // 1. Gather all script-defined module blocks
+        const scriptModuleDefs = expandedList.filter(item => item.moduleDef).map(item => item.moduleDef);
+
+        if (scriptModuleDefs.length > 0) {
+            // 2. Build dependency graph & check cycles
+            const graph = buildScriptModuleDependencyGraph(scriptModuleDefs, this.registry);
+            const cycle = graph.detectCycle();
+            if (cycle) {
+                deserializeCircuit(JSON.parse(initialSnap), this.circuit, this.registry);
+                if (this.engine) {
+                    this.engine.evaluateAll();
+                }
+                this.inTransaction = false;
+
+                const primaryModule = cycle[0];
+                const cycleStr = cycle.join(" → ");
+                let errMsg = `Cannot compile module ${primaryModule}.\nCircular module dependency: ${cycleStr}`;
+                if (cycle.length === 2 && cycle[0] === cycle[1]) {
+                    errMsg += ` (cannot instantiate module '${primaryModule}' recursively)`;
+                } else {
+                    errMsg += ` (Recursive module dependency detected)`;
+                }
+                return {
+                    success: false,
+                    error: errMsg,
+                    message: errMsg
+                };
+            }
+
+            // 3. Topologically sort module compilation order
+            let topoOrder;
+            try {
+                topoOrder = graph.getCompilationOrder();
+            } catch (e) {
+                deserializeCircuit(JSON.parse(initialSnap), this.circuit, this.registry);
+                if (this.engine) {
+                    this.engine.evaluateAll();
+                }
+                this.inTransaction = false;
+                return { success: false, error: e.message };
+            }
+
+            const moduleMap = new Map();
+            for (const mDef of scriptModuleDefs) {
+                moduleMap.set(mDef.name.toLowerCase(), mDef);
+            }
+
+            const orderedDefs = topoOrder
+                .map(name => moduleMap.get(name.toLowerCase()))
+                .filter(Boolean);
+
+            // 4. Compile modules in topological order
+            for (const mDef of orderedDefs) {
                 try {
                     const compiledDef = compileModuleDefinition(
-                        item.moduleDef.name,
-                        item.moduleDef.rawBodyText,
-                        item.moduleDef.startLine,
+                        mDef.name,
+                        mDef.rawBodyText,
+                        mDef.startLine,
                         this.registry,
                         CommandEngine,
                         SimulationEngine
@@ -937,12 +1290,13 @@ export class CommandEngine {
                             existingDef.outputs = compiledDef.outputs;
                             existingDef.components = compiledDef.components;
                             existingDef.wires = compiledDef.wires;
+                            existingDef.dependencies = compiledDef.dependencies;
                         } else {
                             this.registry.register(compiledDef);
                         }
                     }
+                    executedCount++;
                 } catch (e) {
-                    // Roll back circuit graph and registry on compilation error
                     deserializeCircuit(JSON.parse(initialSnap), this.circuit, this.registry);
                     if (this.engine) {
                         this.engine.evaluateAll();
@@ -951,32 +1305,36 @@ export class CommandEngine {
 
                     return {
                         success: false,
-                        line: item.line,
+                        line: mDef.startLine,
                         error: e.message,
                         message: e.message
                     };
                 }
-            } else {
-                const res = this.execute(item.command);
-                if (!res.success) {
-                    // Roll back circuit graph to initial snapshot
-                    deserializeCircuit(JSON.parse(initialSnap), this.circuit, this.registry);
-                    if (this.engine) {
-                        this.engine.evaluateAll();
-                    }
-                    this.inTransaction = false;
-
-                    const contextHeader = item.loopContext ? `${item.loopContext}\n` : "";
-                    const errMsg = `Line ${item.line}:\n${contextHeader}${res.error}`;
-                    return {
-                        success: false,
-                        line: item.line,
-                        error: errMsg,
-                        message: errMsg
-                    };
-                }
             }
+        }
 
+        // 5. Execute non-module top-level commands
+        for (const item of expandedList) {
+            if (item.moduleDef) continue; // Already compiled above
+
+            const res = this.execute(item.command);
+            if (!res.success) {
+                // Roll back circuit graph to initial snapshot
+                deserializeCircuit(JSON.parse(initialSnap), this.circuit, this.registry);
+                if (this.engine) {
+                    this.engine.evaluateAll();
+                }
+                this.inTransaction = false;
+
+                const contextHeader = item.loopContext ? `${item.loopContext}\n` : "";
+                const errMsg = `Line ${item.line}:\n${contextHeader}${res.error}`;
+                return {
+                    success: false,
+                    line: item.line,
+                    error: errMsg,
+                    message: errMsg
+                };
+            }
             executedCount++;
         }
 

@@ -5,7 +5,7 @@
 import { Circuit, Wire } from "../simulation/core.js";
 import { createComponent, COMPONENT_REGISTRY } from "../simulation/components.js";
 import { SimulationEngine } from "../simulation/simulation_engine.js";
-import { ModuleRegistry, ModuleDefinition, UserModule } from "../simulation/modules.js";
+import { ModuleRegistry, ModuleDefinition, UserModule, detachModuleInstance } from "../simulation/modules.js";
 import { serializeCircuit, deserializeCircuit, findDefinitionByNameAndType, getUniqueName } from "../simulation/serialization.js";
 import { CommandEngine } from "../simulation/command_engine.js";
 import { Workspace } from "../canvas/workspace.js";
@@ -2336,120 +2336,17 @@ function triggerDetachModuleInstance() {
     if (comp.type !== "UserModule") return;
 
     if (confirm(`Convert the module instance '${comp.label || comp.definition.name}' into normal individual gates on the workspace?`)) {
-
-        const originX = comp.x;
-        const originY = comp.y;
-
-        // 1. Gather external wires before removing the component
-        const extPinIds = new Set(comp.pins().map(p => p.id));
-        const extWiresToInputs = [];  // wires going into custom module inputs
-        const extWiresFromOutputs = []; // wires coming out of custom module outputs
-
-        for (const wire of circuit.wires.values()) {
-            if (wire.toPin && extPinIds.has(wire.toPin.id)) {
-                extWiresToInputs.push(wire);
-            } else if (wire.fromPin && extPinIds.has(wire.fromPin.id)) {
-                extWiresFromOutputs.push(wire);
-            }
+        try {
+            detachModuleInstance(circuit, comp, registry);
+            selectionManager.clear();
+            engine.evaluateAll();
+            saveHistoryState();
+            updatePropertiesPanel();
+            updateStatusBar();
+            alert("Custom module successfully detached!");
+        } catch (e) {
+            alert(`Detach failed: ${e.message}`);
         }
-
-        // 2. Re-instantiate all internal components of the module onto main circuit
-        const idMap = new Map();
-        const inputsToGates = new Map(); // pin name -> instantiated InputGate
-        const outputsToGates = new Map(); // pin name -> instantiated OutputGate
-
-        for (const innerC of comp.definition.components) {
-            const newId = `${innerC.type.toLowerCase().replace(/\s+/g, "_")}_${Math.random().toString(36).substring(2, 8)}`;
-
-            let newGate;
-            if (innerC.type === "UserModule" && innerC.definition) {
-                newGate = new UserModule(newId, innerC.definition, originX + innerC.x, originY + innerC.y);
-            } else {
-                newGate = createComponent(innerC.type, newId, originX + innerC.x, originY + innerC.y);
-            }
-            newGate.label = innerC.label;
-            circuit.addComponent(newGate);
-            idMap.set(innerC.id, newGate);
-
-            if (innerC.type === "Input") {
-                inputsToGates.set(innerC.label || innerC.id, newGate);
-            } else if (innerC.type === "Output") {
-                outputsToGates.set(innerC.label || innerC.id, newGate);
-            }
-        }
-
-        // 3. Re-create all internal wire links on main circuit
-        const instantiatedIntWires = [];
-        for (const innerW of comp.definition.wires) {
-            const srcCompId = innerW.fromPin.split("_").slice(0, -1).join("_");
-            const tgtCompId = innerW.toPin.split("_").slice(0, -1).join("_");
-
-            const srcNewGate = idMap.get(srcCompId);
-            const tgtNewGate = idMap.get(tgtCompId);
-
-            if (srcNewGate && tgtNewGate) {
-                const srcPinName = innerW.fromPin.split("_").slice(-1)[0];
-                const tgtPinName = innerW.toPin.split("_").slice(-1)[0];
-
-                const srcPin = srcNewGate.outputs.find(p => p.name === srcPinName) || srcNewGate.outputs[0];
-                const tgtPin = tgtNewGate.inputs.find(p => p.name === tgtPinName) || tgtNewGate.inputs[0];
-
-                if (srcPin && tgtPin) {
-                    const newWireId = `wire_${Math.random().toString(36).substring(2, 9)}`;
-                    const wireObj = new Wire(newWireId, srcPin, tgtPin, innerW.color || null);
-                    circuit.addWire(wireObj);
-                    instantiatedIntWires.push(wireObj);
-                }
-            }
-        }
-
-        // 4. Remap input wires:
-        // For each external wire going into a custom module's input pin:
-        for (const extWire of extWiresToInputs) {
-            const pinName = extWire.toPin.name;
-            const newGate = inputsToGates.get(pinName);
-            if (newGate) {
-                // Find internal wires that start from this InputGate's output pin
-                const intWires = instantiatedIntWires.filter(w => w.fromPin === newGate.outputs[0]);
-                for (const w of intWires) {
-                    w.fromPin = extWire.fromPin;
-                    w.points = [];
-                    w.isManuallyRouted = false;
-                }
-                // Delete the InputGate and the original external wire from the circuit
-                circuit.removeComponent(newGate.id);
-                circuit.removeWire(extWire.id);
-            }
-        }
-
-        // 5. Remap output wires:
-        // For each external wire coming out of a custom module's output pin:
-        for (const extWire of extWiresFromOutputs) {
-            const pinName = extWire.fromPin.name;
-            const newGate = outputsToGates.get(pinName);
-            if (newGate) {
-                // Find internal wire that ends at this OutputGate's input pin
-                const intWire = instantiatedIntWires.find(w => w.toPin === newGate.inputs[0]);
-                if (intWire) {
-                    extWire.fromPin = intWire.fromPin;
-                    extWire.points = [];
-                    extWire.isManuallyRouted = false;
-                    // Delete the OutputGate and the internal wire
-                    circuit.removeComponent(newGate.id);
-                    circuit.removeWire(intWire.id);
-                }
-            }
-        }
-
-        // 6. Finally, remove the parent custom module component itself
-        circuit.removeComponent(comp.id);
-
-        selectionManager.clear();
-        engine.evaluateAll();
-        saveHistoryState();
-        updatePropertiesPanel();
-        updateStatusBar();
-        alert("Custom module successfully detached!");
     }
 }
 
