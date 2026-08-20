@@ -1,6 +1,4 @@
-/* ==========================================================================
-   General CSS Stylesheet for Digital Logic Simulator - Dark Theme
-   ========================================================================== */
+/* General CSS Stylesheet for Digital Logic Simulator - Dark Theme */
 
 * {
     box-sizing: border-box;
@@ -19,10 +17,7 @@ body.dark-theme {
     overflow: hidden;
 }
 
-/* ==========================================================================
-   APP HEADER
-   ========================================================================== */
-
+/* APP HEADER */
 .app-header {
     background-color: #1e1e1e;
     border-bottom: 1px solid #2d2d2d;
@@ -56,10 +51,7 @@ body.dark-theme {
     gap: 10px;
 }
 
-/* ==========================================================================
-   BUTTONS
-   ========================================================================== */
-
+/* BUTTONS */
 .btn {
     border: none;
     border-radius: 4px;
@@ -105,10 +97,7 @@ body.dark-theme {
     background-color: #a93226;
 }
 
-/* ==========================================================================
-   MAIN LAYOUT CONTAINER
-   ========================================================================== */
-
+/* MAIN LAYOUT CONTAINER */
 .main-container {
     flex: 1;
     display: flex;
@@ -117,10 +106,7 @@ body.dark-theme {
     height: calc(100vh - 55px - 30px);
 }
 
-/* ==========================================================================
-   SIDEBARS
-   ========================================================================== */
-
+/* SIDEBARS */
 .sidebar {
     background-color: #1a1a1a;
     border-color: #2d2d2d;
@@ -154,10 +140,7 @@ body.dark-theme {
     color: #888888;
 }
 
-/* ==========================================================================
-   SEARCH BOX
-   ========================================================================== */
-
+/* SEARCH BOX */
 .search-box {
     margin: 12px 15px;
     position: relative;
@@ -187,10 +170,7 @@ body.dark-theme {
     border-color: #00adb5;
 }
 
-/* ==========================================================================
-   TOOLBOX CATEGORIES
-   ========================================================================== */
-
+/* TOOLBOX CATEGORIES */
 .toolbox-categories {
     flex: 1;
     overflow-y: auto;
@@ -236,10 +216,7 @@ body.dark-theme {
     padding-left: 5px;
 }
 
-/* ==========================================================================
-   TOOLBOX ITEMS
-   ========================================================================== */
-
+/* TOOLBOX ITEMS */
 .toolbox-item {
     background-color: #252525;
     border: 1px solid #333333;
@@ -263,10 +240,7 @@ body.dark-theme {
     cursor: grabbing;
 }
 
-/* ==========================================================================
-   ITEM TAGS
-   ========================================================================== */
-
+/* ITEM TAGS */
 .item-tag {
     font-size: 9px;
     font-weight: bold;
@@ -275,25 +249,10 @@ body.dark-theme {
     text-transform: uppercase;
 }
 
-.in-tag {
-    background-color: #d4ac0d;
-    color: #000;
-}
-
-.out-tag {
-    background-color: #27ae60;
-    color: #fff;
-}
-
-.high-tag {
-    background-color: #2ecc71;
-    color: #000;
-}
-
-.low-tag {
-    background-color: #e74c3c;
-    color: #fff;
-}
+.in-tag { background-color: #d4ac0d; color: #000; }
+.out-tag { background-color: #27ae60; color: #fff; }
+.high-tag { background-color: #2ecc71; color: #000; }
+.low-tag { background-color: #e74c3c; color: #fff; }
 
 .placeholder-text {
     font-size: 12px;
@@ -303,10 +262,7 @@ body.dark-theme {
     line-height: 1.5;
 }
 
-/* ==========================================================================
-   WORKSPACE AREA
-   ========================================================================== */
-
+/* WORKSPACE AREA */
 .workspace-area {
     flex: 1;
     position: relative;
@@ -320,10 +276,7 @@ body.dark-theme {
     cursor: crosshair;
 }
 
-/* ==========================================================================
-   SHORTCUT HUD
-   ========================================================================== */
-
+/* SHORTCUT HUD */
 .shortcuts-hud {
     position: absolute;
     bottom: 20px;
@@ -375,10 +328,7 @@ kbd {
     color: #ffffff;
 }
 
-/* ==========================================================================
-   PROPERTIES / INSPECTOR
-   ========================================================================== */
-
+/* PROPERTIES / INSPECTOR */
 .inspector-content {
     padding: 15px;
     display: flex;
@@ -454,10 +404,7 @@ kbd {
     padding-bottom: 5px;
 }
 
-/* ==========================================================================
-   STATUS BAR
-   ========================================================================== */
-
+/* STATUS BAR */
 .status-bar {
     background-color: #1e1e1e;
     border-top: 1px solid #2d2d2d;
@@ -471,8 +418,7 @@ kbd {
     z-index: 10;
 }
 
-.status-left,
-.status-right {
+.status-left, .status-right {
     display: flex;
     align-items: center;
     gap: 15px;
@@ -492,10 +438,7 @@ kbd {
     color: #333333;
 }
 
-/* ==========================================================================
-   MODAL OVERLAYS
-   ========================================================================== */
-
+/* MODAL OVERLAYS */
 .modal-overlay {
     position: fixed;
     top: 0;
@@ -657,10 +600,7 @@ kbd {
     margin-top: 20px;
 }
 
-/* ==========================================================================
-   CONTEXT MENU
-   ========================================================================== */
-
+/* CONTEXT MENU */
 .context-menu {
     position: fixed;
     background-color: #1c1c1c;
@@ -718,10 +658,7 @@ kbd {
     margin: 5px 0;
 }
 
-/* ==========================================================================
-   DYNAMIC IN-APP MODAL LIST
-   ========================================================================== */
-
+/* Dynamic In-App Modal list and item styling */
 .modal-list-container {
     max-height: 250px;
     overflow-y: auto;
@@ -783,10 +720,7 @@ kbd {
     color: #ff5e57;
 }
 
-/* ==========================================================================
-   POWER-USER TERMINAL PANEL
-   ========================================================================== */
-
+/* POWER-USER TERMINAL PANEL */
 .terminal-panel {
     position: absolute;
     bottom: 0;
@@ -802,7 +736,7 @@ kbd {
 }
 
 .terminal-panel.collapsed {
-    height: 35px;
+    height: 35px; /* only show header when collapsed */
 }
 
 .terminal-header {
@@ -904,6 +838,100 @@ kbd {
     font-family: "Courier New", Courier, monospace;
 }
 
+/* ==========================================
+   Script Editor & Syntax Highlighting Styles
+   ========================================== */
+.sim-editor-wrapper {
+    display: flex;
+    position: relative;
+    width: 100%;
+    height: 320px;
+    background-color: #121212;
+    border: 1px solid #333333;
+    border-radius: 6px;
+    overflow: hidden;
+    font-family: "Fira Code", "Courier New", Courier, monospace;
+    font-size: 13px;
+    line-height: 20px;
+}
+
+.sim-editor-gutter {
+    width: 48px;
+    background-color: #1a1a1a;
+    border-right: 1px solid #2d2d2d;
+    color: #555555;
+    text-align: right;
+    padding: 10px 8px 10px 0;
+    box-sizing: border-box;
+    user-select: none;
+    overflow: hidden;
+}
+
+.gutter-num {
+    height: 20px;
+    line-height: 20px;
+}
+
+.gutter-num.err-line {
+    background-color: #e74c3c;
+    color: #ffffff;
+    font-weight: bold;
+    border-radius: 2px;
+    padding-right: 4px;
+}
+
+.sim-editor-code-container {
+    position: relative;
+    flex: 1;
+    height: 100%;
+    overflow: hidden;
+}
+
+.sim-editor-highlight,
+.sim-editor-textarea {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 10px;
+    box-sizing: border-box;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    white-space: pre;
+    word-wrap: normal;
+    overflow: auto;
+    tab-size: 4;
+}
+
+.sim-editor-highlight {
+    pointer-events: none;
+    background: transparent;
+    color: #dcdcdc;
+    z-index: 1;
+}
+
+.sim-editor-textarea {
+    z-index: 2;
+    background: transparent;
+    color: transparent;
+    caret-color: #00adb5;
+    border: none;
+    outline: none;
+    resize: none;
+}
+
+/* Syntax Tokens */
+.syn-command { color: #569cd6; font-weight: bold; }
+.syn-type { color: #4ec9b0; font-weight: bold; }
+.syn-number { color: #b5cea8; }
+.syn-operator { color: #d8a0df; font-weight: bold; }
+.syn-identifier { color: #9cdcfe; }
+.syn-comment { color: #6a9955; font-style: italic; }
+.syn-punctuation { color: #ffd700; }
+
 #terminal-input {
     flex: 1;
     background: none;
@@ -913,651 +941,3 @@ kbd {
     font-size: 13px;
     font-family: "Courier New", Courier, monospace;
 }
-
-/* ==========================================================================
-   .sim Script Editor — merged presentation stylesheet
-   ========================================================================== */
-
-.sim-editor {
-    --ed-bg: #101113;
-    --ed-bg-alt: #17181b;
-    --ed-gutter: #15161a;
-    --ed-border: #2e3238;
-    --ed-border-soft: #24272c;
-    --ed-fg: #d6dae1;
-    --ed-dim: #6b7280;
-    --ed-accent: #00adb5;
-    --ed-error: #ff5f56;
-    --ed-warning: #e2b341;
-    --ed-line: 20px;
-
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    border: 1px solid var(--ed-border);
-    border-radius: 8px;
-    background-color: var(--ed-bg);
-    overflow: hidden;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-}
-
-.sim-editor *,
-.sim-editor *::before,
-.sim-editor *::after {
-    box-sizing: border-box;
-}
-
-/* ------------------------------- Toolbar ------------------------------- */
-
-.sim-editor-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    height: 38px;
-    padding: 0 8px 0 12px;
-    background: linear-gradient(180deg, #1f2126 0%, #191b1f 100%);
-    border-bottom: 1px solid var(--ed-border);
-    flex: 0 0 auto;
-}
-
-.sim-editor-file {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.3px;
-    color: #c7ccd4;
-    white-space: nowrap;
-}
-
-.sim-editor-file svg {
-    color: var(--ed-accent);
-}
-
-.sim-editor-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.sim-editor-btn {
-    appearance: none;
-    border: 1px solid #383c43;
-    background-color: #23262b;
-    color: #d6dae1;
-    border-radius: 5px;
-    padding: 4px 10px;
-    font-size: 12px;
-    font-weight: 500;
-    line-height: 18px;
-    cursor: pointer;
-    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
-}
-
-.sim-editor-btn:hover {
-    background-color: #2e3238;
-    border-color: #474c54;
-}
-
-.sim-editor-btn.is-accent {
-    background-color: var(--ed-accent);
-    border-color: var(--ed-accent);
-    color: #06282a;
-    font-weight: 600;
-}
-
-.sim-editor-btn.is-accent:hover {
-    background-color: #16c3cb;
-    border-color: #16c3cb;
-}
-
-.sim-editor-btn.is-quiet {
-    background-color: transparent;
-    border-color: transparent;
-    color: var(--ed-dim);
-}
-
-.sim-editor-btn.is-quiet:hover {
-    color: #d6dae1;
-    background-color: #23262b;
-}
-
-.sim-editor-btn.is-on {
-    border-color: var(--ed-accent);
-    color: var(--ed-accent);
-}
-
-.sim-editor-sep {
-    width: 1px;
-    height: 18px;
-    background-color: var(--ed-border);
-    margin: 0 2px;
-}
-
-.sim-editor-stat {
-    font-family: ui-monospace, "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, monospace;
-    font-size: 11px;
-    color: var(--ed-dim);
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-}
-
-.sim-editor-stat.is-error {
-    color: var(--ed-error);
-}
-
-.sim-editor-stat.is-warning {
-    color: var(--ed-warning);
-}
-
-.sim-editor-stat.is-ok {
-    color: var(--ed-dim);
-}
-
-/* Shortcut hints popover */
-
-.sim-editor-hint-wrap {
-    position: relative;
-    display: inline-flex;
-}
-
-.sim-editor-hints {
-    position: absolute;
-    top: calc(100% + 8px);
-    right: 0;
-    z-index: 40;
-    width: 232px;
-    padding: 8px;
-    background-color: #1d1f24;
-    border: 1px solid var(--ed-border);
-    border-radius: 6px;
-    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
-}
-
-.sim-editor-hints .hint-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11.5px;
-    color: #b6bcc5;
-    padding: 4px;
-}
-
-.sim-editor-hints .hint-row span {
-    flex: 1;
-}
-
-.sim-editor-mount 
-
-.sim-editor-hints kbd {
-    font-family: inherit;
-    font-size: 10.5px;
-    background-color: #2a2d33;
-    border: 1px solid #3c4046;
-    border-bottom-width: 2px;
-    border-radius: 4px;
-    padding: 1px 5px;
-    color: #dfe3e9;
-}
-
-/* -------------------------------- Body -------------------------------- */
-
-.sim-editor-wrapper {
-    display: flex;
-    position: relative;
-    width: 100%;
-    height: 340px;
-    min-height: 140px;
-    background-color: var(--ed-bg);
-    font-family: "JetBrains Mono", "Fira Code", ui-monospace, "SFMono-Regular", Menlo,
-        Consolas, "Courier New", monospace;
-    font-size: 13px;
-    line-height: var(--ed-line);
-    overflow: hidden;
-}
-
-.sim-editor-gutter {
-    position: relative;
-    z-index: 3;
-    flex: 0 0 auto;
-    min-width: 52px;
-    background-color: var(--ed-gutter);
-    border-right: 1px solid var(--ed-border-soft);
-    color: #4d535c;
-    padding: 10px 0;
-    overflow: hidden;
-    user-select: none;
-}
-
-.gutter-num {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 5px;
-    height: var(--ed-line);
-    line-height: var(--ed-line);
-    padding: 0 10px 0 6px;
-    font-size: 11.5px;
-    font-variant-numeric: tabular-nums;
-    cursor: pointer;
-    transition: color 0.12s;
-}
-
-.gutter-num:hover {
-    color: #9aa2ad;
-}
-
-.gutter-num.is-active {
-    color: #eef1f5;
-    background-color: rgba(255, 255, 255, 0.045);
-}
-
-.gutter-num .gutter-marker {
-    display: inline-flex;
-    align-items: center;
-    line-height: 0;
-}
-
-.gutter-num .gutter-marker.is-error {
-    color: var(--ed-error);
-}
-
-.gutter-num .gutter-marker.is-warning {
-    color: var(--ed-warning);
-}
-
-.gutter-num.err-line {
-    color: #ffd9d6;
-    background-color: rgba(255, 95, 86, 0.16);
-    box-shadow: inset 2px 0 0 var(--ed-error);
-}
-
-.gutter-num.warn-line {
-    color: #ffe9bd;
-    background-color: rgba(226, 179, 65, 0.14);
-    box-shadow: inset 2px 0 0 var(--ed-warning);
-}
-
-.sim-editor-code-container {
-    position: relative;
-    flex: 1 1 auto;
-    height: 100%;
-    min-width: 0;
-    overflow: hidden;
-}
-
-/* Line bands */
-
-.sim-editor-lines {
-    position: absolute;
-    top: 10px;
-    left: 0;
-    right: 0;
-    z-index: 0;
-    pointer-events: none;
-    will-change: transform;
-}
-
-.line-band {
-    height: var(--ed-line);
-}
-
-.line-band.is-active {
-    background-color: rgba(255, 255, 255, 0.035);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
-}
-
-.line-band.is-error {
-    background-color: rgba(255, 95, 86, 0.1);
-    box-shadow: inset 2px 0 0 var(--ed-error);
-}
-
-.line-band.is-warning {
-    background-color: rgba(226, 179, 65, 0.09);
-    box-shadow: inset 2px 0 0 var(--ed-warning);
-}
-
-.sim-editor-highlight,
-.sim-editor-textarea {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    margin: 0;
-    padding: 10px 14px;
-    border: 0;
-    font-family: inherit;
-    font-size: inherit;
-    line-height: inherit;
-    letter-spacing: normal;
-    white-space: pre;
-    word-wrap: normal;
-    overflow: auto;
-    tab-size: 4;
-}
-
-.sim-editor.is-wrapped .sim-editor-highlight,
-.sim-editor.is-wrapped .sim-editor-textarea {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-}
-
-.sim-editor-highlight {
-    z-index: 1;
-    pointer-events: none;
-    background: transparent;
-    color: var(--ed-fg);
-    overflow: hidden;
-}
-
-.sim-editor-highlight code {
-    font: inherit;
-    background: none;
-    padding: 0;
-}
-
-/* .sim-editor-highlight code span {
-    font-size: 12px;
-} */
-
-.sim-editor-textarea {
-    z-index: 2;
-    background: transparent;
-    color: transparent;
-    caret-color: var(--ed-accent);
-    outline: none;
-    resize: none;
-}
-
-.sim-editor-textarea::placeholder {
-    color: #4a5058;
-}
-
-.sim-editor-textarea::selection {
-    background-color: rgba(0, 173, 181, 0.3);
-}
-
-.sim-editor-wrapper:focus-within {
-    box-shadow: inset 0 0 0 1px rgba(0, 173, 181, 0.55);
-}
-
-.sim-editor.is-readonly .sim-editor-textarea {
-    caret-color: transparent;
-}
-
-/* Slim scrollbars */
-
-.sim-editor-textarea::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-}
-
-.sim-editor-textarea::-webkit-scrollbar-thumb {
-    background-color: #33373e;
-    border-radius: 6px;
-    border: 2px solid var(--ed-bg);
-}
-
-.sim-editor-textarea::-webkit-scrollbar-thumb:hover {
-    background-color: #444a52;
-}
-
-.sim-editor-textarea::-webkit-scrollbar-corner {
-    background: transparent;
-}
-
-/* ==========================================================================
-   SYNTAX TOKENS
-   ========================================================================== */
-
-.syn-command {
-    color: #61afef;
-}
-
-.syn-type {
-    color: #4ec9b0;
-}
-
-.syn-operator {
-    color: #c792ea;
-}
-
-.syn-identifier {
-    color: #9cdcfe;
-}
-
-.syn-number {
-    color: #c3e88d;
-}
-
-.syn-unit {
-    color: #8bbf7a;
-    font-style: italic;
-}
-
-.syn-boolean {
-    color: #f78c6c;
-}
-
-.syn-string {
-    color: #e6c07b;
-}
-
-.syn-comment {
-    color: #5f7c62;
-    font-style: italic;
-}
-
-.syn-paranthesis {
-    color: rgb(209, 177, 112);
-}
-
-.syn-punctuation {
-    color: rgb(205, 205, 205);
-}
-
-/* ==========================================================================
-   DOCS / MARKDOWN
-   ========================================================================== */
-
-.doc-body {
-    font-size: 13.5px;
-    line-height: 1.65;
-    color: #cfd4dc;
-    user-select: text;
-}
-
-.doc-h1,
-.doc-h2,
-.doc-h3,
-.doc-h4 {
-    color: #f0f3f7;
-    line-height: 1.3;
-    font-weight: 650;
-}
-
-.doc-h1 {
-    font-size: 21px;
-    margin: 4px 0 12px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid #2c3037;
-}
-
-.doc-h2 {
-    font-size: 17px;
-    margin: 22px 0 8px;
-}
-
-.doc-h3 {
-    font-size: 14.5px;
-    margin: 18px 0 6px;
-    color: var(--ed-accent, #00adb5);
-}
-
-.doc-h4 {
-    font-size: 13px;
-    margin: 14px 0 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: #9aa2ad;
-}
-
-.doc-p {
-    margin: 0 0 10px;
-}
-
-.doc-list,
-.doc-list-ordered {
-    margin: 0 0 12px 20px;
-    padding: 0;
-}
-
-.doc-list li,
-.doc-list-ordered li {
-    margin: 3px 0;
-}
-
-.doc-list {
-    list-style: none;
-}
-
-.doc-list > li::before {
-    content: "▸";
-    color: #00adb5;
-    display: inline-block;
-    width: 14px;
-    margin-left: -14px;
-}
-
-.doc-task {
-    list-style: none;
-}
-
-.doc-inline-code {
-    font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
-    font-size: 12px;
-    background-color: #22252a;
-    border: 1px solid #31353c;
-    border-radius: 4px;
-    padding: 1px 5px;
-    color: #9cdcfe;
-}
-
-.doc-code-block {
-    position: relative;
-    margin: 0 0 14px;
-    padding: 12px 14px;
-    background-color: #101113;
-    border: 1px solid #2b2f35;
-    border-left: 3px solid #00adb5;
-    border-radius: 6px;
-    overflow-x: auto;
-    font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
-    font-size: 12.5px;
-    line-height: 1.6;
-    color: #d6dae1;
-    user-select: text;
-}
-
-.doc-code-block .doc-code-lang {
-    position: absolute;
-    top: 0;
-    right: 0;
-    font-size: 10px;
-    letter-spacing: 0.6px;
-    text-transform: uppercase;
-    color: #6b7280;
-    background-color: #1b1e22;
-    border-left: 1px solid #2b2f35;
-    border-bottom: 1px solid #2b2f35;
-    border-radius: 0 5px 0 5px;
-    padding: 2px 7px;
-}
-
-.doc-quote {
-    margin: 0 0 12px;
-    padding: 8px 12px;
-    background-color: rgba(0, 173, 181, 0.07);
-    border-left: 3px solid #00adb5;
-    border-radius: 0 5px 5px 0;
-    color: #b9c0c9;
-}
-
-.doc-hr {
-    border: 0;
-    border-top: 1px solid #2c3037;
-    margin: 18px 0;
-}
-
-.doc-link {
-    color: #61afef;
-    text-decoration: none;
-    border-bottom: 1px dotted #61afef;
-}
-
-.doc-link:hover {
-    color: #8ac4ff;
-}
-
-.doc-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 0 0 14px;
-    font-size: 12.5px;
-}
-
-.doc-table th,
-.doc-table td {
-    border: 1px solid #2c3037;
-    padding: 6px 9px;
-    text-align: left;
-}
-
-.doc-table th {
-    background-color: #1d2024;
-    color: #e6e9ee;
-    font-weight: 600;
-}
-
-.doc-table tr:nth-child(even) td {
-    background-color: rgba(255, 255, 255, 0.02);
-}
-
-.toast {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    padding: 12px 18px;
-    border-radius: 8px;
-    background: #222;
-    color: white;
-    font-size: 14px;
-    opacity: 0;
-    transform: translateY(10px);
-    transition: opacity 0.2s ease, transform 0.2s ease;
-    pointer-events: none;
-    z-index: 9999;
-}
-
-.toast.visible {
-    opacity: 1;
-    transform: translateY(0);
-}
-
-.toast-success {
-    border-left: 4px solid #4ade80;
-}
-
-/* ==========================================================================
-   STATUS / UTILITY COMPATIBILITY
-   ========================================================================== */
-
-/*
- * The old .sim-editor-wrapper editor block has intentionally been removed.
- * Its replacement is the scoped editor implementation above.
- *
- * The rest of the original simulator stylesheet remains unchanged.
- */
