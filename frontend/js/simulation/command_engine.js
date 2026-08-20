@@ -4,7 +4,7 @@ import { UserModule, ModuleDefinition, detachModuleInstance } from "./modules.js
 import { serializeCircuit, deserializeCircuit } from "./serialization.js";
 import { parseBooleanExpression } from "./expr_parser.js";
 import { synthesizeExpression } from "./expr_synthesizer.js";
-import { expandScript, compileModuleDefinition, buildScriptModuleDependencyGraph, parseAndValidateModuleArgs } from "./script_parser.js";
+import { expandScript, compileModuleDefinition, buildScriptModuleDependencyGraph, parseAndValidateModuleArgs, processScriptImports, defaultFileResolver, normalizePath } from "./script_parser.js";
 import { SimulationEngine } from "./simulation_engine.js";
 import { findDefinitionByNameAndType } from "./serialization.js";
 
@@ -106,6 +106,11 @@ export class CommandEngine {
         // Handle show module command: show module ModuleName
         if (cmd === "show" && parts.length >= 3 && parts[1].toLowerCase() === "module") {
             return this._handleShowModule(parts[2]);
+        }
+
+        // Handle show library command: show library "PATH"
+        if (cmd === "show" && parts.length >= 3 && parts[1].toLowerCase() === "library") {
+            return this._handleShowLibrary(parts.slice(2).join(" ").trim());
         }
 
         try {
@@ -844,6 +849,46 @@ export class CommandEngine {
         return { success: true, data: output, message: output };
     }
 
+    _handleShowLibrary(rawPath) {
+        if (!rawPath) {
+            return { success: false, error: "Syntax: show library \"PATH\"" };
+        }
+        const normPath = normalizePath(rawPath.replace(/^['"]|['"]$/g, ""));
+
+        let meta = this.lastLibraryMetadata ? this.lastLibraryMetadata.get(normPath) : null;
+
+        if (!meta) {
+            try {
+                const content = defaultFileResolver(normPath);
+                const importedRes = processScriptImports(content, normPath);
+                meta = importedRes.libraryMetadata.get(normPath) || {
+                    filePath: normPath,
+                    imports: Array.from(importedRes.importGraph.adj.get(normPath) || []),
+                    constants: Object.keys(importedRes.resolvedConstants),
+                    modules: importedRes.importedModuleDefs.map(m => m.name)
+                };
+            } catch (e) {
+                return { success: false, error: `Could not inspect library '${normPath}': ${e.message}` };
+            }
+        }
+
+        const lines = [
+            `Library: ${meta.filePath || normPath}`,
+            "",
+            "Imported Dependencies:",
+            ...(meta.imports && meta.imports.length > 0 ? meta.imports.map(i => `  - ${i}`) : ["  (none)"]),
+            "",
+            "Constants:",
+            ...(meta.constants && meta.constants.length > 0 ? meta.constants.map(c => `  - ${c}`) : ["  (none)"]),
+            "",
+            "Module Definitions:",
+            ...(meta.modules && meta.modules.length > 0 ? meta.modules.map(m => `  - ${m}`) : ["  (none)"])
+        ];
+
+        const output = lines.join("\n");
+        return { success: true, data: output, message: output };
+    }
+
     _handleShow(parts, original) {
         // Syntax: show NAME
         if (parts.length < 2) {
@@ -1257,14 +1302,26 @@ export class CommandEngine {
      * @param {string} scriptText
      * @returns {{ success: boolean, message?: string, error?: string, line?: number, linesExecuted?: number }}
      */
-    executeScript(scriptText) {
+    executeScript(scriptText, options = {}) {
         if (typeof scriptText !== "string") {
             return { success: false, error: "Invalid script content" };
         }
 
+        const initialSnap = JSON.stringify(serializeCircuit(this.circuit, this.registry));
+        const initialRegistryKeys = new Set(this.registry ? Array.from(this.registry.definitions.keys()) : []);
+
+        let importedRes;
+        try {
+            importedRes = processScriptImports(scriptText, options.filePath || "main.sim", options);
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+
+        this.lastLibraryMetadata = importedRes.libraryMetadata;
+
         let expandedList;
         try {
-            expandedList = expandScript(scriptText);
+            expandedList = expandScript(scriptText, importedRes.resolvedConstants);
         } catch (e) {
             return {
                 success: false,
@@ -1272,23 +1329,26 @@ export class CommandEngine {
             };
         }
 
-        const initialSnap = JSON.stringify(serializeCircuit(this.circuit, this.registry));
-
         this.inTransaction = true;
         let executedCount = 0;
 
-        // 1. Gather all script-defined module blocks
-        const scriptModuleDefs = expandedList.filter(item => item.moduleDef).map(item => item.moduleDef);
+        // Combine imported module definitions with top-level script module definitions
+        const allModuleDefs = [
+            ...importedRes.importedModuleDefs,
+            ...expandedList.filter(item => item.moduleDef).map(item => item.moduleDef)
+        ];
 
-        if (scriptModuleDefs.length > 0) {
-            // 2. Build dependency graph & check cycles
-            const graph = buildScriptModuleDependencyGraph(scriptModuleDefs, this.registry);
+        if (allModuleDefs.length > 0) {
+            const graph = buildScriptModuleDependencyGraph(allModuleDefs, this.registry);
             const cycle = graph.detectCycle();
             if (cycle) {
                 deserializeCircuit(JSON.parse(initialSnap), this.circuit, this.registry);
-                if (this.engine) {
-                    this.engine.evaluateAll();
+                if (this.registry) {
+                    for (const key of Array.from(this.registry.definitions.keys())) {
+                        if (!initialRegistryKeys.has(key)) this.registry.delete(key);
+                    }
                 }
+                if (this.engine) this.engine.evaluateAll();
                 this.inTransaction = false;
 
                 const primaryModule = cycle[0];
@@ -1306,21 +1366,23 @@ export class CommandEngine {
                 };
             }
 
-            // 3. Topologically sort module compilation order
             let topoOrder;
             try {
                 topoOrder = graph.getCompilationOrder();
             } catch (e) {
                 deserializeCircuit(JSON.parse(initialSnap), this.circuit, this.registry);
-                if (this.engine) {
-                    this.engine.evaluateAll();
+                if (this.registry) {
+                    for (const key of Array.from(this.registry.definitions.keys())) {
+                        if (!initialRegistryKeys.has(key)) this.registry.delete(key);
+                    }
                 }
+                if (this.engine) this.engine.evaluateAll();
                 this.inTransaction = false;
                 return { success: false, error: e.message };
             }
 
             const moduleMap = new Map();
-            for (const mDef of scriptModuleDefs) {
+            for (const mDef of allModuleDefs) {
                 moduleMap.set(mDef.name.toLowerCase(), mDef);
             }
 
@@ -1328,7 +1390,6 @@ export class CommandEngine {
                 .map(name => moduleMap.get(name.toLowerCase()))
                 .filter(Boolean);
 
-            // 4. Compile modules in topological order
             for (const mDef of orderedDefs) {
                 try {
                     if (mDef.params && mDef.params.length > 0) {
@@ -1338,15 +1399,9 @@ export class CommandEngine {
                             mDef.name,
                             `Parameterized script-defined module ${mDef.name}`,
                             "Custom",
-                            [],
-                            [],
-                            [],
-                            [],
-                            "Module",
-                            "Custom",
-                            [],
-                            mDef.params,
-                            null
+                            [], [], [], [],
+                            "Module", "Custom", [],
+                            mDef.params, null
                         );
                         templateDef.rawBodyText = mDef.rawBodyText;
                         templateDef.startLine = mDef.startLine;
@@ -1368,7 +1423,8 @@ export class CommandEngine {
                             mDef.startLine,
                             this.registry,
                             CommandEngine,
-                            SimulationEngine
+                            SimulationEngine,
+                            importedRes.resolvedConstants
                         );
 
                         if (this.registry) {
@@ -1387,16 +1443,20 @@ export class CommandEngine {
                     executedCount++;
                 } catch (e) {
                     deserializeCircuit(JSON.parse(initialSnap), this.circuit, this.registry);
-                    if (this.engine) {
-                        this.engine.evaluateAll();
+                    if (this.registry) {
+                        for (const key of Array.from(this.registry.definitions.keys())) {
+                            if (!initialRegistryKeys.has(key)) this.registry.delete(key);
+                        }
                     }
+                    if (this.engine) this.engine.evaluateAll();
                     this.inTransaction = false;
 
+                    const srcHeader = mDef.sourceFile ? `Error compiling ${mDef.sourceFile}\n` : "";
                     return {
                         success: false,
                         line: mDef.startLine,
-                        error: e.message,
-                        message: e.message
+                        error: `${srcHeader}${e.message}`,
+                        message: `${srcHeader}${e.message}`
                     };
                 }
             }
@@ -1408,11 +1468,13 @@ export class CommandEngine {
 
             const res = this.execute(item.command);
             if (!res.success) {
-                // Roll back circuit graph to initial snapshot
                 deserializeCircuit(JSON.parse(initialSnap), this.circuit, this.registry);
-                if (this.engine) {
-                    this.engine.evaluateAll();
+                if (this.registry) {
+                    for (const key of Array.from(this.registry.definitions.keys())) {
+                        if (!initialRegistryKeys.has(key)) this.registry.delete(key);
+                    }
                 }
+                if (this.engine) this.engine.evaluateAll();
                 this.inTransaction = false;
 
                 const contextHeader = item.loopContext ? `${item.loopContext}\n` : "";

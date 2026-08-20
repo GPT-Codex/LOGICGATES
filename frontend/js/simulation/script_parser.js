@@ -12,6 +12,288 @@
 
 import { Circuit, Wire, Bus } from "./core.js";
 import { ModuleDefinition, ModuleDependencyGraph } from "./modules.js";
+
+/**
+ * Normalize file path string.
+ * @param {string} pathStr
+ * @returns {string}
+ */
+export function normalizePath(pathStr) {
+    if (typeof pathStr !== "string") return "";
+    const parts = pathStr.replace(/\\/g, "/").split("/");
+    const stack = [];
+    for (const part of parts) {
+        if (!part || part === ".") continue;
+        if (part === "..") {
+            if (stack.length > 0) stack.pop();
+        } else {
+            stack.push(part);
+        }
+    }
+    return stack.join("/");
+}
+
+/**
+ * Resolve an import path relative to the importing file's directory.
+ * @param {string} importPath
+ * @param {string} [importingFilePath]
+ * @returns {string}
+ */
+export function resolveImportPath(importPath, importingFilePath = "main.sim") {
+    const cleanImport = importPath.trim().replace(/^['"]|['"]$/g, "");
+    if (cleanImport.startsWith("/")) {
+        return normalizePath(cleanImport);
+    }
+    const lastSlash = importingFilePath.replace(/\\/g, "/").lastIndexOf("/");
+    const parentDir = lastSlash !== -1 ? importingFilePath.substring(0, lastSlash) : "";
+    const combined = parentDir ? `${parentDir}/${cleanImport}` : cleanImport;
+    return normalizePath(combined);
+}
+
+/**
+ * Default file loader for reading imported .sim scripts.
+ * @param {string} filePath
+ * @param {Object.<string, string>} [virtualFiles]
+ * @returns {string}
+ */
+export function defaultFileResolver(filePath, virtualFiles = {}) {
+    const normPath = normalizePath(filePath);
+    if (virtualFiles && Object.prototype.hasOwnProperty.call(virtualFiles, normPath)) {
+        return virtualFiles[normPath];
+    }
+    if (typeof process !== "undefined" && process.versions && process.versions.node) {
+        try {
+            const fs = eval("require('fs')");
+            if (fs.existsSync(normPath)) {
+                return fs.readFileSync(normPath, "utf-8");
+            }
+            const altLibPath = "data/libraries/" + normPath;
+            if (fs.existsSync(altLibPath)) {
+                return fs.readFileSync(altLibPath, "utf-8");
+            }
+            const altModPath = "data/modules/" + normPath;
+            if (fs.existsSync(altModPath)) {
+                return fs.readFileSync(altModPath, "utf-8");
+            }
+        } catch (e) {
+            // fs not available
+        }
+    }
+    throw new Error(`File not found: '${filePath}'`);
+}
+
+/**
+ * Dependency graph for tracking imported script files and detecting circular imports.
+ */
+export class ImportDependencyGraph {
+    constructor() {
+        this.nodes = new Set();
+        this.adj = new Map();
+    }
+
+    addFile(filePath) {
+        const norm = normalizePath(filePath);
+        this.nodes.add(norm);
+        if (!this.adj.has(norm)) {
+            this.adj.set(norm, new Set());
+        }
+    }
+
+    addImportDependency(fromFile, toFile) {
+        const normFrom = normalizePath(fromFile);
+        const normTo = normalizePath(toFile);
+        this.addFile(normFrom);
+        this.addFile(normTo);
+        this.adj.get(normFrom).add(normTo);
+    }
+
+    detectCycle() {
+        const visited = new Set();
+        const recStack = new Set();
+        const path = [];
+
+        for (const root of this.nodes) {
+            if (!visited.has(root)) {
+                const res = this._dfsCycle(root, visited, recStack, path);
+                if (res) return res;
+            }
+        }
+        return null;
+    }
+
+    _dfsCycle(u, visited, recStack, path) {
+        visited.add(u);
+        recStack.add(u);
+        path.push(u);
+
+        const neighbors = this.adj.get(u) || new Set();
+        for (const v of neighbors) {
+            if (!visited.has(v)) {
+                const res = this._dfsCycle(v, visited, recStack, path);
+                if (res) return res;
+            } else if (recStack.has(v)) {
+                const startIdx = path.indexOf(v);
+                const cyclePath = path.slice(startIdx);
+                cyclePath.push(v);
+                return cyclePath;
+            }
+        }
+
+        path.pop();
+        recStack.delete(u);
+        return null;
+    }
+
+    getCompilationOrder() {
+        const cycle = this.detectCycle();
+        if (cycle) {
+            throw new Error(`Circular import:\n${cycle.join(" -> ")}`);
+        }
+
+        const visited = new Set();
+        const order = [];
+
+        for (const node of this.nodes) {
+            if (!visited.has(node)) {
+                this._dfsTopo(node, visited, order);
+            }
+        }
+
+        return order;
+    }
+
+    _dfsTopo(u, visited, order) {
+        visited.add(u);
+        const neighbors = this.adj.get(u) || new Set();
+        for (const v of neighbors) {
+            if (!visited.has(v)) {
+                this._dfsTopo(v, visited, order);
+            }
+        }
+        order.push(u);
+    }
+}
+
+/**
+ * Process import statements recursively across a script and its dependencies.
+ * @param {string} mainScriptText
+ * @param {string} [mainFilePath]
+ * @param {Object} [options]
+ * @returns {{ resolvedConstants: Object.<string, number>, importedModuleDefs: Array, importedFiles: Set<string>, importGraph: ImportDependencyGraph, libraryMetadata: Map<string, Object> }}
+ */
+export function processScriptImports(mainScriptText, mainFilePath = "main.sim", options = {}) {
+    const fileResolver = options.fileResolver || ((path) => defaultFileResolver(path, options.virtualFiles));
+    const mainNormPath = normalizePath(mainFilePath) || "main.sim";
+
+    const importGraph = new ImportDependencyGraph();
+    importGraph.addFile(mainNormPath);
+
+    const fileTexts = new Map();
+    fileTexts.set(mainNormPath, mainScriptText);
+
+    // Recursively collect imports
+    function collectImports(currPath, scriptContent) {
+        const lines = scriptContent.split(/\r?\n/);
+        for (const rawLine of lines) {
+            let line = rawLine;
+            const cIdx = line.indexOf("#");
+            if (cIdx !== -1) line = line.substring(0, cIdx);
+            const trimmed = line.trim();
+
+            const importMatch = trimmed.match(/^import\s+["']([^"']+)["']/i);
+            if (importMatch) {
+                const rawImport = importMatch[1];
+                const resolvedTarget = resolveImportPath(rawImport, currPath);
+
+                importGraph.addImportDependency(currPath, resolvedTarget);
+
+                if (!fileTexts.has(resolvedTarget)) {
+                    try {
+                        const targetContent = fileResolver(resolvedTarget);
+                        fileTexts.set(resolvedTarget, targetContent);
+                        collectImports(resolvedTarget, targetContent);
+                    } catch (e) {
+                        throw new Error(`Error compiling ${currPath}:\nCannot import '${rawImport}': ${e.message}`);
+                    }
+                }
+            }
+        }
+    }
+
+    collectImports(mainNormPath, mainScriptText);
+
+    // Check for circular imports
+    const cycle = importGraph.detectCycle();
+    if (cycle) {
+        throw new Error(`Circular import:\n${cycle.join(" -> ")}`);
+    }
+
+    const topoOrder = importGraph.getCompilationOrder();
+
+    let combinedConstantsScope = { ...(options.initialScope || {}) };
+    const importedModuleDefs = [];
+    const libraryMetadata = new Map();
+
+    const moduleSourceMap = new Map();   // moduleName (lower) -> filePath
+    const constSourceMap = new Map();    // constName (lower) -> filePath
+
+    for (const filePath of topoOrder) {
+        if (filePath === mainNormPath) continue; // mainScriptText executed separately
+
+        const scriptContent = fileTexts.get(filePath) || "";
+        const lines = scriptContent.split(/\r?\n/);
+
+        // 1. Resolve constants in imported file
+        try {
+            const fileConstants = resolveConstantsInBlock(lines, combinedConstantsScope);
+
+            for (const [key, val] of Object.entries(fileConstants)) {
+                if (!(key in combinedConstantsScope)) {
+                    const lowerK = key.toLowerCase();
+                    if (constSourceMap.has(lowerK) && constSourceMap.get(lowerK) !== filePath) {
+                        throw new Error(`Import conflict:\nConstant '${key}' is already defined.\nSource: ${constSourceMap.get(lowerK)}\nConflict: ${filePath}`);
+                    }
+                    constSourceMap.set(lowerK, filePath);
+                }
+            }
+
+            combinedConstantsScope = fileConstants;
+        } catch (e) {
+            throw new Error(`Error compiling ${filePath}:\n${e.message}`);
+        }
+
+        // 2. Extract module blocks from imported file
+        const expanded = expandScript(scriptContent, combinedConstantsScope);
+        const scriptMods = expanded.filter(item => item.moduleDef).map(item => item.moduleDef);
+
+        const fileModNames = [];
+        for (const mDef of scriptMods) {
+            const lowerName = mDef.name.toLowerCase();
+            if (moduleSourceMap.has(lowerName) && moduleSourceMap.get(lowerName) !== filePath) {
+                throw new Error(`Import conflict:\nModule '${mDef.name}' is already defined.\nSource: ${moduleSourceMap.get(lowerName)}\nConflict: ${filePath}`);
+            }
+            moduleSourceMap.set(lowerName, filePath);
+            mDef.sourceFile = filePath;
+            importedModuleDefs.push(mDef);
+            fileModNames.push(mDef.name);
+        }
+
+        libraryMetadata.set(filePath, {
+            filePath,
+            imports: Array.from(importGraph.adj.get(filePath) || []),
+            constants: Object.keys(combinedConstantsScope),
+            modules: fileModNames
+        });
+    }
+
+    return {
+        resolvedConstants: combinedConstantsScope,
+        importedModuleDefs,
+        importedFiles: new Set(topoOrder.filter(p => p !== mainNormPath)),
+        importGraph,
+        libraryMetadata
+    };
+}
 import { serializeCircuit, findDefinitionByNameAndType } from "./serialization.js";
 
 const MAX_NESTING_DEPTH = 5;
@@ -130,6 +412,139 @@ export function validateModuleParameters(paramNames, argValues, moduleName, inst
     }
 
     return paramScope;
+}
+
+/**
+ * Extract variable identifier references from an arithmetic expression string.
+ * @param {string} exprStr
+ * @returns {string[]}
+ */
+export function findVariableReferencesInExpr(exprStr) {
+    const refs = new Set();
+    const regex = /\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g;
+    let match;
+    while ((match = regex.exec(exprStr)) !== null) {
+        refs.add(match[1]);
+    }
+    return Array.from(refs);
+}
+
+/**
+ * Pre-resolve constant declarations (`const NAME = EXPR`) in a script block.
+ * Handles topological evaluation, dependency resolution, cycle detection, and reassignment rejection.
+ * @param {string[]} lines
+ * @param {Object.<string, number>} [outerScope]
+ * @returns {Object.<string, number>}
+ */
+export function resolveConstantsInBlock(lines, outerScope = {}) {
+    const constDecls = [];
+    const constMap = new Map();
+
+    for (let idx = 0; idx < lines.length; idx++) {
+        const lineNum = idx + 1;
+        let line = lines[idx];
+        const cIdx = line.indexOf("#");
+        if (cIdx !== -1) line = line.substring(0, cIdx);
+        const trimmed = line.trim();
+
+        const match = trimmed.match(/^const\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+)$/i);
+        if (match) {
+            const name = match[1];
+            const exprStr = match[2].trim();
+            const lowerName = name.toLowerCase();
+
+            if (constMap.has(lowerName)) {
+                throw new Error(`Line ${lineNum}:\nCannot reassign constant '${name}'`);
+            }
+
+            const decl = { name, exprStr, lineNum, deps: [] };
+            constDecls.push(decl);
+            constMap.set(lowerName, decl);
+        }
+    }
+
+    if (constDecls.length === 0) {
+        return { ...outerScope };
+    }
+
+    // Identify constant dependencies
+    for (const decl of constDecls) {
+        const refs = findVariableReferencesInExpr(decl.exprStr);
+        for (const ref of refs) {
+            if (constMap.has(ref.toLowerCase())) {
+                decl.deps.push(constMap.get(ref.toLowerCase()).name);
+            }
+        }
+    }
+
+    // Cycle detection using DFS
+    const visited = new Set();
+    const recStack = new Set();
+    const path = [];
+
+    function dfs(nodeName) {
+        visited.add(nodeName);
+        recStack.add(nodeName);
+        path.push(nodeName);
+
+        const decl = constMap.get(nodeName.toLowerCase());
+        if (decl) {
+            for (const dep of decl.deps) {
+                const depLower = dep.toLowerCase();
+                if (!visited.has(depLower)) {
+                    const cycle = dfs(depLower);
+                    if (cycle) return cycle;
+                } else if (recStack.has(depLower)) {
+                    const startIdx = path.findIndex(p => p.toLowerCase() === depLower);
+                    const cyclePath = path.slice(startIdx).map(p => constMap.get(p.toLowerCase()).name);
+                    cyclePath.push(constMap.get(depLower).name);
+                    return cyclePath;
+                }
+            }
+        }
+
+        path.pop();
+        recStack.delete(nodeName);
+        return null;
+    }
+
+    for (const decl of constDecls) {
+        const lower = decl.name.toLowerCase();
+        if (!visited.has(lower)) {
+            const cycle = dfs(lower);
+            if (cycle) {
+                throw new Error(`Constant dependency cycle:\n${cycle.join(" -> ")}`);
+            }
+        }
+    }
+
+    // Topological evaluation
+    const evaluatedScope = { ...outerScope };
+    const evalVisited = new Set();
+
+    function evaluateConst(decl) {
+        const lower = decl.name.toLowerCase();
+        if (evalVisited.has(lower)) return;
+
+        for (const dep of decl.deps) {
+            const depDecl = constMap.get(dep.toLowerCase());
+            if (depDecl) evaluateConst(depDecl);
+        }
+
+        try {
+            const val = evaluateIntExpression(decl.exprStr, evaluatedScope);
+            evaluatedScope[decl.name] = val;
+            evalVisited.add(lower);
+        } catch (e) {
+            throw new Error(`Line ${decl.lineNum}:\nError evaluating constant '${decl.name}': ${e.message}`);
+        }
+    }
+
+    for (const decl of constDecls) {
+        evaluateConst(decl);
+    }
+
+    return evaluatedScope;
 }
 
 /**
@@ -404,6 +819,7 @@ export function expandScript(scriptText, initialScope = {}) {
     }
 
     const rawLines = scriptText.split(/\r?\n/);
+    const resolvedConstantsScope = resolveConstantsInBlock(rawLines, initialScope);
     const expandedList = [];
 
     let totalIterations = 0;
@@ -440,6 +856,12 @@ export function expandScript(scriptText, initialScope = {}) {
 
             if (trimmed === "}") {
                 return lineIdx; // End of block
+            }
+
+            // Skip const and import statements during command expansion as they are pre-resolved compile-time declarations
+            if (trimmed.match(/^(const|import)\s+/i)) {
+                lineIdx++;
+                continue;
             }
 
             // Check for module definition block: `module ModuleName(params) {` or `module ModuleName {`
@@ -565,7 +987,7 @@ export function expandScript(scriptText, initialScope = {}) {
         return lineIdx;
     }
 
-    processBlock(0, { ...initialScope }, 0, []);
+    processBlock(0, { ...resolvedConstantsScope }, 0, []);
 
     return expandedList;
 }

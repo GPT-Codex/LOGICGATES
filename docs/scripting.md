@@ -19,6 +19,8 @@ The `.sim` circuit scripting language allows you to create, modify, connect, and
 | `detach` | `detach INSTANCE` | Detach/expand a module instance into individual gates on the circuit. |
 | `list` | `list` | List all components, buses, and wires in the active circuit. |
 | `net` | `net NAME` | Create a net signal node (buffer pass-through). |
+| `const` | `const NAME = EXPR` | Declare an immutable compile-time integer constant. |
+| `import` | `import "PATH"` / `import './PATH'` | Import reusable constants and module definitions from a script library file. |
 | `bus` | `bus NAME[START..END]` | Declare a first-class $N$-bit bus vector. |
 | `expr` | `expr OUTPUT = BOOLEAN_EXPRESSION` | Synthesize a boolean expression into gates and wires. |
 | `for` | `for VAR in START..END { ... }` | Loop over an inclusive numerical range. |
@@ -174,6 +176,118 @@ Pin references support dot notation across nested module boundaries:
 - `trace FA0.Cout`: Traces logical signal propagation through module boundaries, outputting the path chain (`FA0.Cout ↓ FA1.Cin ↓ FA1.Cout ↓ Cout`).
 - `expand ADDER4`: Displays an ASCII tree representation (`├──`, `└──`) of internal components and wire links.
 - `detach FA0`: Expands module instance `FA0` into its constituent gates and wires directly on the circuit canvas without leaving stale references.
+- `show library "PATH"`: Displays library file metadata, imported dependencies, constants, and exported module definitions.
+
+---
+
+## 3. Compile-Time Integer Constants (`const`)
+
+Declare immutable compile-time integer constants using `const NAME = EXPR`:
+
+```text
+const WIDTH = 16
+const LAST = WIDTH - 1
+const HALF = WIDTH / 2
+```
+
+### Usage
+Constants can be used anywhere compile-time integer expressions are accepted:
+- Bus vector ranges: `bus A[0..LAST]`
+- Loop ranges: `for i in 0..LAST`
+- Array indices and coordinate arithmetic: `move A[i] to (0, i * 40)`
+- Module parameter arguments: `add RCA(WIDTH) ADD16`
+
+### Resolution & Rules
+1. **Dependency Resolution:** Constants can reference previously or forwardly declared constants. Resolution is deterministic using topological ordering.
+2. **Cycle Detection:** Constant dependency cycles (`const A = B + 1` and `const B = A + 1`) are strictly rejected with an error chain (`Constant dependency cycle: A -> B -> A`).
+3. **Immutability:** Reassigning or attempting to overwrite a constant (e.g., `const WIDTH = 32`) throws a clear error.
+4. **Scope Hierarchy:** `local loop variable / parameter` → `module-local constant` → `project-level / library constant`.
+
+---
+
+## 4. Reusable Script Libraries & Imports (`import`)
+
+Import reusable constants and module definitions from external `.sim` files:
+
+```text
+import "./lib/arithmetic.sim"
+```
+
+### Import Semantics
+- **Definitions-Only Loading:** `import` loads constants and compiles `module` blocks into the module registry. Importing a library file **never** places components on the circuit canvas directly; instantiation requires explicit `add` commands in your project script.
+- **Relative Path Resolution:** Paths starting with `./` or `../` are resolved relative to the directory containing the importing script. Standard paths like `std/logic.sim` resolve against the library search paths.
+- **Deduplication:** Multiple imports of the same file (e.g. `import "./logic.sim"` in two different files) load and compile the library at most once.
+- **Circular Import Detection:** Circular import dependencies (`A.sim → B.sim → A.sim`) are rejected before compilation with a clear dependency chain error (`Circular import: A.sim -> B.sim -> A.sim`).
+- **Name Conflict Protection:** If two imported files attempt to define the same module or constant name, execution aborts with a source context conflict error.
+
+### Multi-File Library Structure Example
+
+#### `lib/logic.sim`
+```text
+# Gate primitives library
+module FADDER {
+    input A
+    input B
+    input Cin
+
+    output S
+    output Cout
+
+    expr S = A XOR B XOR Cin
+    expr Cout = (A AND B) OR (Cin AND (A XOR B))
+}
+```
+
+#### `lib/arithmetic.sim`
+```text
+# Arithmetic modules library
+import "./logic.sim"
+
+const MAX_WIDTH = 256
+
+module RCA(width) {
+    input A[0..width-1]
+    input B[0..width-1]
+    input Cin
+
+    output S[0..width-1]
+    output Cout
+
+    add FADDER FA[0]
+    connect A[0] -> FA[0].A
+    connect B[0] -> FA[0].B
+    connect Cin -> FA[0].Cin
+    connect FA[0].S -> S[0]
+
+    for i in 1..width-1 {
+        add FADDER FA[i]
+        connect A[i] -> FA[i].A
+        connect B[i] -> FA[i].B
+        connect FA[i - 1].Cout -> FA[i].Cin
+        connect FA[i].S -> S[i]
+    }
+
+    connect FA[width - 1].Cout -> Cout
+}
+```
+
+#### `main.sim`
+```text
+# Top-level project script
+import "./lib/arithmetic.sim"
+
+const WORD_SIZE = 16
+
+bus A[0..WORD_SIZE-1]
+bus B[0..WORD_SIZE-1]
+
+add input Cin
+add RCA(WORD_SIZE) ADD16
+add output Cout
+
+connect Cin -> ADD16.Cin
+connect ADD16.Cout -> Cout
+```
 
 ### Restrictions
 - Direct recursion and indirect circular module dependencies are rejected.

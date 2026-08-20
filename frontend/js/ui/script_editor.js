@@ -10,7 +10,7 @@
  */
 
 const COMMANDS = new Set([
-    "add", "remove", "move", "connect", "disconnect", "set", "get", "list", "show", "expr", "bus", "net", "for", "in", "module"
+    "add", "remove", "move", "connect", "disconnect", "set", "get", "list", "show", "expr", "bus", "net", "for", "in", "module", "const", "import"
 ]);
 
 const COMP_TYPES = new Set([
@@ -65,6 +65,23 @@ export function highlightSimScript(text) {
             if (/\s/.test(ch)) {
                 html += escapeHtml(ch);
                 i++;
+                continue;
+            }
+
+            // Quoted strings e.g. import "std/logic.sim"
+            if (ch === '"' || ch === "'") {
+                const quote = ch;
+                let strVal = ch;
+                i++;
+                while (i < codePart.length && codePart[i] !== quote) {
+                    strVal += codePart[i];
+                    i++;
+                }
+                if (i < codePart.length) {
+                    strVal += codePart[i];
+                    i++;
+                }
+                html += `<span class="syn-string">${escapeHtml(strVal)}</span>`;
                 continue;
             }
 
