@@ -987,7 +987,7 @@ function triggerRunScriptDialog(commandEngine, autoSync = false) {
         const errorDiv = document.getElementById("sim-script-error");
 
         const initialCode = autoSync ? commandEngine.exportScript() : "";
-        const editor = new ScriptEditor(mountEl, { initialValue: initialCode });
+        const editor = new ScriptEditor(mountEl, { initialValue: initialCode, onRunScript: (code) => {runScript(code)}});
 
         document.getElementById("btn-run-script-cancel").addEventListener("click", closeModal);
 
@@ -1018,13 +1018,29 @@ function triggerRunScriptDialog(commandEngine, autoSync = false) {
             fileInput.click();
         });
 
-        document.getElementById("btn-run-script-exec").addEventListener("click", () => {
-            const code = editor.getValue();
+                function showToast(message, type = "success") {
+            const toast = document.createElement("div");
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+
+            document.body.appendChild(toast);
+
+            requestAnimationFrame(() => {
+                toast.classList.add("visible");
+            });
+
+            setTimeout(() => {
+                toast.classList.remove("visible");
+                setTimeout(() => toast.remove(), 200);
+            }, 2500);
+        }
+        function runScript(code) {
             errorDiv.style.display = "none";
             errorDiv.textContent = "";
             editor.setErrorLine(null);
 
             const res = commandEngine.executeScript(code);
+
             if (res.success) {
                 commandEngine.engine.evaluateAll();
                 selectionManager.clear();
@@ -1032,14 +1048,20 @@ function triggerRunScriptDialog(commandEngine, autoSync = false) {
                 updatePropertiesPanel();
                 updateStatusBar();
                 closeModal();
-                alert(`Script executed successfully (${res.linesExecuted} commands).`);
+
+                showToast(`Script executed successfully — ${res.linesExecuted} commands.`);
             } else {
                 errorDiv.style.display = "block";
                 errorDiv.textContent = res.error;
+
                 if (res.line) {
                     editor.setErrorLine(res.line);
                 }
             }
+        }
+
+        document.getElementById("btn-run-script-exec").addEventListener("click", () => {
+            runScript(editor.getValue());
         });
     });
 }
@@ -1049,11 +1071,16 @@ function triggerScriptDocsDialog() {
     .then(res => res.text())
     .then(markdownText => {
         const html = `
-            <div style="max-height: 480px; overflow-y: auto; padding: 12px; background-color: #161616; border: 1px solid #333; border-radius: 6px; color: #ddd; font-size: 13px; line-height: 1.6;">
-                ${renderMarkdown(markdownText)}
+            <div class="markdown-wrapper">
+                <div class="markdown-body">
+                    ${marked.parse(markdownText)}
+                </div>
             </div>
+
             <div class="modal-footer" style="margin-top: 15px; text-align: right;">
-                <button class="btn btn-primary" id="btn-close-docs">Close</button>
+                <button class="btn btn-primary" id="btn-close-docs">
+                    Close
+                </button>
             </div>
         `;
         openModal('<i class="fa-solid fa-book"></i> Scripting Language Reference (.sim)', html, () => {
@@ -1062,7 +1089,6 @@ function triggerScriptDocsDialog() {
     })
     .catch(err => alert("Error loading scripting documentation: " + err.message));
 }
-
 /**
  * Import .sim File Workflow
  */

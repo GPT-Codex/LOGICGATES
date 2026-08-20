@@ -32,7 +32,7 @@ The `.sim` circuit scripting language allows you to create, modify, connect, and
 
 Define reusable circuit components using the `module` block:
 
-```text
+```sim
 module FullAdder {
     input A
     input B
@@ -48,7 +48,7 @@ module FullAdder {
 
 ### Parameterized Modules
 Modules can accept compile-time integer parameters:
-```text
+```sim
 module RCA(width) {
     input A[0..width-1]
     input B[0..width-1]
@@ -95,7 +95,7 @@ When compiled, the subcircuit is validated for valid drivers, port connections, 
 ### Hierarchical Modules
 Modules can instantiate other user-defined modules to construct arbitrary N-level component hierarchies:
 
-```text
+```sim
 module FADDER {
     input A
     input B
@@ -148,14 +148,14 @@ module ADDER4 {
 An explicit dependency graph is maintained across all script-defined and registered modules.
 Compilation order is determined automatically using topological sorting, so declaration order in text files does not restrict module composition.
 Direct recursion (`add A X` inside `A`) and indirect circular module dependencies (`A → B → C → A`) are strictly rejected before partial modification occurs:
-```text
+```sim
 Cannot compile module A.
 Circular module dependency: A → B → C → A
 ```
 
 ### Instance Arrays & Loops
 Modules support indexed instance arrays:
-```text
+```sim
 for i in 0..3 {
     add FADDER FA[i]
     connect A[i] FA[i].A
@@ -184,7 +184,7 @@ Pin references support dot notation across nested module boundaries:
 
 Declare immutable compile-time integer constants using `const NAME = EXPR`:
 
-```text
+```sim
 const WIDTH = 16
 const LAST = WIDTH - 1
 const HALF = WIDTH / 2
@@ -209,7 +209,7 @@ Constants can be used anywhere compile-time integer expressions are accepted:
 
 Import reusable constants and module definitions from external `.sim` files:
 
-```text
+```sim
 import "./lib/arithmetic.sim"
 ```
 
@@ -223,7 +223,7 @@ import "./lib/arithmetic.sim"
 ### Multi-File Library Structure Example
 
 #### `lib/logic.sim`
-```text
+```sim
 # Gate primitives library
 module FADDER {
     input A
@@ -239,7 +239,7 @@ module FADDER {
 ```
 
 #### `lib/arithmetic.sim`
-```text
+```sim
 # Arithmetic modules library
 import "./logic.sim"
 
@@ -272,7 +272,7 @@ module RCA(width) {
 ```
 
 #### `main.sim`
-```text
+```sim
 # Top-level project script
 import "./lib/arithmetic.sim"
 
@@ -296,7 +296,7 @@ connect ADD16.Cout -> Cout
 
 ### Module Instantiation & Pin Identity
 Instantiate defined modules with `add`:
-```text
+```sim
 add FullAdder FA0
 add FullAdder FA1
 
@@ -333,7 +333,7 @@ Supported built-in component types:
 All coordinates on the canvas use a 20px grid system. Explicitly positioned components using `move NAME to (X, Y)` are marked as position-locked anchors (`isExplicitPosition = true`) and will **not** be moved or rearranged during subsequent boolean expression synthesis (`expr`).
 
 Example:
-```text
+```sim
 add input A
 move A to (0, 100)
 
@@ -355,7 +355,7 @@ Component and signal identifiers support multi-dimensional array indexing:
 - `G[0].A` (accessing pin `A` on component `G[0]`)
 
 Ranges support inclusive ascending (`0..15`) and descending (`15..0`) ranges:
-```text
+```sim
 for i in 0..7 {
     add input A[i]
     move A[i] to (0, i * 40)
@@ -367,19 +367,19 @@ for i in 0..7 {
 ## 6. First-Class Buses & Vector Operations
 
 Declare buses with `bus NAME[START..END]`:
-```text
+```sim
 bus A[0..15]
 bus B[0..15]
 ```
 
 Vector connections automatically map corresponding index bits pairwise between compatible buses or module vector ports:
-```text
+```sim
 connect A B
 ```
 If source and destination widths mismatch (e.g., `A[0..15]` to `B[0..7]`), execution aborts with a descriptive width error: `Cannot connect A to B: source width = 16, destination width = 8`.
 
 Explicit bus slices are also supported:
-```text
+```sim
 connect A[0..7] B[0..7]
 ```
 
@@ -388,7 +388,7 @@ connect A[0..7] B[0..7]
 ## 7. Boolean Expression Synthesis
 
 Synthesize expressions directly into gates and wires using `expr`:
-```text
+```sim
 expr S = A XOR B XOR Cin
 expr Cout = (A AND B) OR (A AND Cin) OR (B AND Cin)
 ```
@@ -402,7 +402,7 @@ expr Cout = (A AND B) OR (A AND Cin) OR (B AND Cin)
 
 ### Self-Reference Restriction
 An output signal cannot reference itself in its own expression:
-```text
+```sim
 # INVALID - Self-referential expression!
 expr A = A XOR B
 ```
@@ -413,13 +413,13 @@ This is rejected with a clear error: `Cannot define 'A' because it is referenced
 ## 8. Comments & Error Reporting
 
 Lines or suffixes starting with `#` are treated as comments:
-```text
+```sim
 # Full Adder Circuit
 add input A # Primary input
 ```
 
 Script execution operates within a single transaction boundary. If an error occurs on any line or loop iteration, the entire execution rolls back cleanly, reporting the 1-based line number and loop context:
-```text
+```sim
 Line 5:
 Loop iteration: i = 2
 Unknown pin 'INVALID' on component 'G[2]'
@@ -430,7 +430,7 @@ Unknown pin 'INVALID' on component 'G[2]'
 ## 9. Complete Working Examples
 
 ### 1. Half Adder
-```text
+```sim
 # Half Adder Script
 add input A
 move A to (0, 100)
@@ -453,7 +453,7 @@ expr Carry = A AND B
 ```
 
 ### 2. Full Adder Module Definition & Instantiation
-```text
+```sim
 # 1. Define reusable FullAdder module
 module FullAdder {
     input A
@@ -494,7 +494,7 @@ connect FA0.Cout Cout
 ```
 
 ### 3. 4-Bit Ripple-Carry Adder Using FullAdder Modules & Loops
-```text
+```sim
 # 1. Define FullAdder module
 module FullAdder {
     input A
@@ -542,7 +542,7 @@ connect FA[3].Cout Cout
 ```
 
 ### 4. 8-Bit Ripple-Carry Adder
-```text
+```sim
 # 8-Bit Ripple-Carry Adder
 bus A[0..7]
 bus B[0..7]
@@ -577,7 +577,7 @@ connect C[7] Cout
 ```
 
 ### 5. Vector Bus Example
-```text
+```sim
 module Buffer8 {
     input A[0..7]
     output O[0..7]

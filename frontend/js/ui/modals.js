@@ -1,8 +1,15 @@
 /**
  * Modern In-App Reusable Modal Dialog manager.
- */
+ **/
 
-export function openModal(title, htmlContent, onOpenCallback = null, onCloseCallback = null) {
+import { highlightSimScript } from "./script_editor.js";
+
+export function openModal(
+    title,
+    htmlContent,
+    onOpenCallback = null,
+    onCloseCallback = null
+) {
     const modalOverlay = document.getElementById("generic-dialog-modal");
     const modalTitle = document.getElementById("generic-modal-title");
     const modalBody = document.getElementById("generic-modal-body");
@@ -10,12 +17,17 @@ export function openModal(title, htmlContent, onOpenCallback = null, onCloseCall
     modalTitle.innerHTML = title;
     modalBody.innerHTML = htmlContent;
 
+    modalBody.querySelectorAll("pre code").forEach((block) => {
+        block.innerHTML = highlightSimScript(block.textContent);
+    });
+
     modalOverlay.classList.add("active");
 
     if (onOpenCallback) {
         onOpenCallback();
     }
 }
+
 
 export function closeModal() {
     const modalOverlay = document.getElementById("generic-dialog-modal");
