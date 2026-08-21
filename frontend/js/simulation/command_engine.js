@@ -77,6 +77,15 @@ export class CommandEngine {
 
         const cmd = parts[0].toLowerCase();
 
+        // Handle import command in REPL: import "PATH" or import './PATH'
+        if (cmd === "import") {
+            const importRes = this.executeScript(trimmed);
+            if (importRes.success) {
+                return { success: true, message: `Successfully imported ${parts.slice(1).join(" ")}` };
+            }
+            return importRes;
+        }
+
         // Handle bus declaration command: bus NAME[START..END]
         if (cmd === "bus") {
             return this._handleBus(parts, trimmed);
@@ -1310,9 +1319,21 @@ export class CommandEngine {
         const initialSnap = JSON.stringify(serializeCircuit(this.circuit, this.registry));
         const initialRegistryKeys = new Set(this.registry ? Array.from(this.registry.definitions.keys()) : []);
 
+        const mainFilePath = options.filePath || "main.sim";
+        const virtualFiles = { ...(this.circuit ? (this.circuit.files || {}) : {}), ...(options.virtualFiles || {}) };
+        if (typeof scriptText === "string") {
+            try {
+                virtualFiles[normalizePath(mainFilePath)] = scriptText;
+            } catch (e) {
+                // ignore
+            }
+        }
+
+        const mergedOptions = { ...options, virtualFiles, filePath: mainFilePath };
+
         let importedRes;
         try {
-            importedRes = processScriptImports(scriptText, options.filePath || "main.sim", options);
+            importedRes = processScriptImports(scriptText, mainFilePath, mergedOptions);
         } catch (e) {
             return { success: false, error: e.message };
         }
