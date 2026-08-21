@@ -77,6 +77,10 @@ export class CommandEngine {
 
         const cmd = parts[0].toLowerCase();
 
+        if (cmd === "import") {
+            return this.executeScript(trimmed);
+        }
+
         // Handle bus declaration command: bus NAME[START..END]
         if (cmd === "bus") {
             return this._handleBus(parts, trimmed);
@@ -859,8 +863,9 @@ export class CommandEngine {
 
         if (!meta) {
             try {
-                const content = defaultFileResolver(normPath);
-                const importedRes = processScriptImports(content, normPath);
+                const fileStore = this.circuit ? this.circuit.files : null;
+                const content = defaultFileResolver(normPath, fileStore);
+                const importedRes = processScriptImports(content, normPath, { fileStore });
                 meta = importedRes.libraryMetadata.get(normPath) || {
                     filePath: normPath,
                     imports: Array.from(importedRes.importGraph.adj.get(normPath) || []),
@@ -1307,12 +1312,15 @@ export class CommandEngine {
             return { success: false, error: "Invalid script content" };
         }
 
+        const fileStore = options.fileStore || (this.circuit ? this.circuit.files : null);
+        const scriptOptions = { ...options, fileStore };
+
         const initialSnap = JSON.stringify(serializeCircuit(this.circuit, this.registry));
         const initialRegistryKeys = new Set(this.registry ? Array.from(this.registry.definitions.keys()) : []);
 
         let importedRes;
         try {
-            importedRes = processScriptImports(scriptText, options.filePath || "main.sim", options);
+            importedRes = processScriptImports(scriptText, scriptOptions.filePath || "main.sim", scriptOptions);
         } catch (e) {
             return { success: false, error: e.message };
         }
