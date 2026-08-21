@@ -120,11 +120,14 @@ export function serializeCircuit(circuit, registry) {
         }
     }
 
+    const files = circuit && circuit.files ? circuit.files.serialize() : {};
+
     return {
         components,
         wires,
         buses,
-        definitions
+        definitions,
+        files
     };
 }
 
@@ -136,6 +139,10 @@ export function serializeCircuit(circuit, registry) {
  */
 export function deserializeCircuit(data, circuit, registry) {
     circuit.clear();
+
+    if (data.files && circuit && circuit.files) {
+        circuit.files.deserialize(data.files);
+    }
 
     // 1. Re-register any custom definitions contained in the project save file
     if (data.definitions && registry) {

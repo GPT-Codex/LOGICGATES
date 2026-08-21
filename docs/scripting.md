@@ -207,18 +207,32 @@ Constants can be used anywhere compile-time integer expressions are accepted:
 
 ## 4. Reusable Script Libraries & Imports (`import`)
 
-Import reusable constants and module definitions from external `.sim` files:
+Import reusable constants, parameterized modules, and hierarchical module definitions from project-local `.sim` files:
 
 ```sim
 import "./lib/arithmetic.sim"
 ```
 
-### Import Semantics
-- **Definitions-Only Loading:** `import` loads constants and compiles `module` blocks into the module registry. Importing a library file **never** places components on the circuit canvas directly; instantiation requires explicit `add` commands in your project script.
-- **Relative Path Resolution:** Paths starting with `./` or `../` are resolved relative to the directory containing the importing script. Standard paths like `std/logic.sim` resolve against the library search paths.
-- **Deduplication:** Multiple imports of the same file (e.g. `import "./logic.sim"` in two different files) load and compile the library at most once.
-- **Circular Import Detection:** Circular import dependencies (`A.sim → B.sim → A.sim`) are rejected before compilation with a clear dependency chain error (`Circular import: A.sim -> B.sim -> A.sim`).
-- **Name Conflict Protection:** If two imported files attempt to define the same module or constant name, execution aborts with a source context conflict error.
+### Import Semantics & Path Resolution
+- **Definitions-Only Loading:** `import` loads compile-time constants and compiles `module` blocks into the project module registry. Importing a library file **never** automatically instantiates components or places gates on the circuit canvas; instantiation requires explicit `add` commands in your project script.
+- **Project-Local File Store:** All `.sim` files reside in the browser project's internal `ProjectFileStore` (`circuit.files`) and survive project save, load, and JSON export/import.
+- **Relative Path Semantics:**
+  * `./` explicitly denotes relative paths from the importing file's directory (e.g., `import "./lib/logic.sim"` in `main.sim` resolves to `lib/logic.sim`).
+  * Relative traversal with `../` resolves up directory levels within the project (e.g., `import "../logic.sim"` in `lib/deeper/arithmetic.sim` resolves to `lib/logic.sim`).
+  * Direct project-relative paths (e.g., `import "lib/logic.sim"`) are also supported.
+- **Security & Path Normalization:** Paths are normalized using `/` as the canonical separator regardless of host OS. Path traversals attempting to escape the project root (e.g., `import "../../outside.sim"`) are strictly rejected with a security error.
+- **Deduplication:** Multiple imports of the same normalized file path (e.g. `import "./logic.sim"` in two different files) load and compile the library file at most once.
+- **Circular Import Detection:** Circular import dependencies (`A.sim → B.sim → A.sim`) are detected via topological dependency graph analysis and rejected before compilation with a clear cycle path error (`Circular import: A.sim -> B.sim -> A.sim`).
+- **Name Conflict Protection:** If two imported files attempt to define the same module or constant name, compilation aborts with a source context conflict error.
+- **Context-Rich Error Reporting:** If an imported file is missing or contains errors, the compiler outputs the exact importing file, requested path, resolved path, and dependency chain context:
+  ```
+  Import error:
+  Dependency chain: main.sim -> lib/arithmetic.sim
+  Source: lib/arithmetic.sim
+  Requested: ./missing_logic.sim
+  Resolved: lib/missing_logic.sim
+  File does not exist in the current project.
+  ```
 
 ### Multi-File Library Structure Example
 

@@ -12,73 +12,74 @@
 
 import { Circuit, Wire, Bus } from "./core.js";
 import { ModuleDefinition, ModuleDependencyGraph } from "./modules.js";
+import { ProjectFileStore, normalizePath, isEscapingRoot } from "./project_files.js";
+
+export { normalizePath, isEscapingRoot };
 
 /**
- * Normalize file path string.
- * @param {string} pathStr
- * @returns {string}
- */
-export function normalizePath(pathStr) {
-    if (typeof pathStr !== "string") return "";
-    const parts = pathStr.replace(/\\/g, "/").split("/");
-    const stack = [];
-    for (const part of parts) {
-        if (!part || part === ".") continue;
-        if (part === "..") {
-            if (stack.length > 0) stack.pop();
-        } else {
-            stack.push(part);
-        }
-    }
-    return stack.join("/");
-}
-
-/**
- * Resolve an import path relative to the importing file's directory.
+ * Resolve an import path relative to the importing file's directory within the project file store.
  * @param {string} importPath
  * @param {string} [importingFilePath]
+ * @param {ProjectFileStore|null} [fileStore]
  * @returns {string}
  */
-export function resolveImportPath(importPath, importingFilePath = "main.sim") {
+export function resolveImportPath(importPath, importingFilePath = "main.sim", fileStore = null) {
     const cleanImport = importPath.trim().replace(/^['"]|['"]$/g, "");
     if (cleanImport.startsWith("/")) {
+        if (isEscapingRoot(cleanImport)) {
+            throw new Error(`Security Error: Cannot access path outside project root: '${cleanImport}'`);
+        }
         return normalizePath(cleanImport);
     }
+
     const lastSlash = importingFilePath.replace(/\\/g, "/").lastIndexOf("/");
     const parentDir = lastSlash !== -1 ? importingFilePath.substring(0, lastSlash) : "";
     const combined = parentDir ? `${parentDir}/${cleanImport}` : cleanImport;
-    return normalizePath(combined);
+
+    if (isEscapingRoot(combined)) {
+        throw new Error(`Security Error: Cannot access path outside project root: '${cleanImport}'`);
+    }
+
+    const resolvedDirRelative = normalizePath(combined);
+
+    if (fileStore) {
+        if (typeof fileStore.hasFile === "function") {
+            if (fileStore.hasFile(resolvedDirRelative)) {
+                return resolvedDirRelative;
+            }
+            if (!isEscapingRoot(cleanImport)) {
+                const resolvedRootRelative = normalizePath(cleanImport);
+                if (fileStore.hasFile(resolvedRootRelative)) {
+                    return resolvedRootRelative;
+                }
+            }
+        }
+    }
+
+    return resolvedDirRelative;
 }
 
 /**
- * Default file loader for reading imported .sim scripts.
+ * Default file loader for reading imported .sim scripts from ProjectFileStore or virtual file map.
  * @param {string} filePath
- * @param {Object.<string, string>} [virtualFiles]
+ * @param {ProjectFileStore|Object.<string, string>} [fileStoreOrVirtual]
  * @returns {string}
  */
-export function defaultFileResolver(filePath, virtualFiles = {}) {
-    const normPath = normalizePath(filePath);
-    if (virtualFiles && Object.prototype.hasOwnProperty.call(virtualFiles, normPath)) {
-        return virtualFiles[normPath];
+export function defaultFileResolver(filePath, fileStoreOrVirtual = null) {
+    if (isEscapingRoot(filePath)) {
+        throw new Error(`Security Error: Cannot access path outside project root: '${filePath}'`);
     }
-    if (typeof process !== "undefined" && process.versions && process.versions.node) {
-        try {
-            const fs = eval("require('fs')");
-            if (fs.existsSync(normPath)) {
-                return fs.readFileSync(normPath, "utf-8");
-            }
-            const altLibPath = "data/libraries/" + normPath;
-            if (fs.existsSync(altLibPath)) {
-                return fs.readFileSync(altLibPath, "utf-8");
-            }
-            const altModPath = "data/modules/" + normPath;
-            if (fs.existsSync(altModPath)) {
-                return fs.readFileSync(altModPath, "utf-8");
-            }
-        } catch (e) {
-            // fs not available
+    const normPath = normalizePath(filePath);
+
+    if (fileStoreOrVirtual) {
+        if (typeof fileStoreOrVirtual.getFile === "function") {
+            const content = fileStoreOrVirtual.getFile(normPath);
+            if (content !== null) return content;
+        } else if (typeof fileStoreOrVirtual === "object" && Object.prototype.hasOwnProperty.call(fileStoreOrVirtual, normPath)) {
+            return fileStoreOrVirtual[normPath];
         }
     }
+
     throw new Error(`File not found: '${filePath}'`);
 }
 
@@ -182,7 +183,7 @@ export class ImportDependencyGraph {
  * @returns {{ resolvedConstants: Object.<string, number>, importedModuleDefs: Array, importedFiles: Set<string>, importGraph: ImportDependencyGraph, libraryMetadata: Map<string, Object> }}
  */
 export function processScriptImports(mainScriptText, mainFilePath = "main.sim", options = {}) {
-    const fileResolver = options.fileResolver || ((path) => defaultFileResolver(path, options.virtualFiles));
+    const fileStore = options.fileStore || null;
     const mainNormPath = normalizePath(mainFilePath) || "main.sim";
 
     const importGraph = new ImportDependencyGraph();
@@ -191,8 +192,29 @@ export function processScriptImports(mainScriptText, mainFilePath = "main.sim", 
     const fileTexts = new Map();
     fileTexts.set(mainNormPath, mainScriptText);
 
+    function getFileContent(targetPath) {
+        if (fileStore && typeof fileStore.getFile === "function") {
+            const content = fileStore.getFile(targetPath);
+            if (content !== null) return content;
+        }
+        if (typeof options.fileResolver === "function") {
+            try {
+                return options.fileResolver(targetPath);
+            } catch (e) {
+                return null;
+            }
+        }
+        if (options.virtualFiles) {
+            const norm = normalizePath(targetPath);
+            if (Object.prototype.hasOwnProperty.call(options.virtualFiles, norm)) {
+                return options.virtualFiles[norm];
+            }
+        }
+        return null;
+    }
+
     // Recursively collect imports
-    function collectImports(currPath, scriptContent) {
+    function collectImports(currPath, scriptContent, callStack = [currPath]) {
         const lines = scriptContent.split(/\r?\n/);
         for (const rawLine of lines) {
             let line = rawLine;
@@ -203,18 +225,25 @@ export function processScriptImports(mainScriptText, mainFilePath = "main.sim", 
             const importMatch = trimmed.match(/^import\s+["']([^"']+)["']/i);
             if (importMatch) {
                 const rawImport = importMatch[1];
-                const resolvedTarget = resolveImportPath(rawImport, currPath);
+                let resolvedTarget;
+                try {
+                    resolvedTarget = resolveImportPath(rawImport, currPath, fileStore);
+                } catch (secErr) {
+                    const chainStr = callStack.length > 0 ? `Dependency chain: ${callStack.join(" -> ")}\n` : "";
+                    throw new Error(`Import error:\n${chainStr}Source: ${currPath}\nRequested: ${rawImport}\n${secErr.message}`);
+                }
 
                 importGraph.addImportDependency(currPath, resolvedTarget);
 
                 if (!fileTexts.has(resolvedTarget)) {
-                    try {
-                        const targetContent = fileResolver(resolvedTarget);
-                        fileTexts.set(resolvedTarget, targetContent);
-                        collectImports(resolvedTarget, targetContent);
-                    } catch (e) {
-                        throw new Error(`Error compiling ${currPath}:\nCannot import '${rawImport}': ${e.message}`);
+                    const targetContent = getFileContent(resolvedTarget);
+                    if (targetContent === null || targetContent === undefined) {
+                        const chainStr = callStack.length > 0 ? `Dependency chain: ${callStack.join(" -> ")}\n` : "";
+                        throw new Error(`Import error:\n${chainStr}Source: ${currPath}\nRequested: ${rawImport}\nResolved: ${resolvedTarget}\nFile does not exist in the current project.`);
                     }
+
+                    fileTexts.set(resolvedTarget, targetContent);
+                    collectImports(resolvedTarget, targetContent, [...callStack, resolvedTarget]);
                 }
             }
         }

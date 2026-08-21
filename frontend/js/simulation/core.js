@@ -242,6 +242,8 @@ export class Bus {
     }
 }
 
+import { ProjectFileStore } from "./project_files.js";
+
 export class Circuit {
     constructor() {
         /** @type {Map<string, Component>} */
@@ -250,6 +252,8 @@ export class Circuit {
         this.wires = new Map();
         /** @type {Map<string, Bus>} */
         this.buses = new Map();
+        /** @type {ProjectFileStore} */
+        this.files = new ProjectFileStore();
     }
 
     addComponent(comp) {
@@ -286,9 +290,12 @@ export class Circuit {
         this.buses.delete(name);
     }
 
-    clear() {
+    clear(clearFiles = false) {
         this.components.clear();
         this.wires.clear();
         this.buses.clear();
+        if (clearFiles && this.files) {
+            this.files.clear();
+        }
     }
 }

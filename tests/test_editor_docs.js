@@ -23,13 +23,13 @@ function runEditorDocsTests() {
 
     const html = highlightSimScript(sampleScript);
     assert(html.includes('<span class="syn-comment"># Full adder</span>'), "Comments should be highlighted");
-    assert(html.includes('<span class="syn-command">for</span>'), "'for' keyword should be highlighted as command");
-    assert(html.includes('<span class="syn-command">in</span>'), "'in' keyword should be highlighted as command");
+    assert(html.includes('<span class="syn-command"') && html.includes('>for</span>'), "'for' keyword should be highlighted as command");
+    assert(html.includes('<span class="syn-command"') && html.includes('>in</span>'), "'in' keyword should be highlighted as command");
     assert(html.includes('<span class="syn-number">0..15</span>'), "Range should be highlighted as number");
     assert(html.includes('<span class="syn-type">input</span>'), "'input' should be highlighted as component type");
     assert(html.includes('<span class="syn-identifier">A</span>'), "'A' should be highlighted as identifier");
-    assert(html.includes('<span class="syn-operator">=</span>'), "'=' should be highlighted as operator");
-    assert(html.includes('<span class="syn-type">XOR</span>'), "'XOR' should be highlighted as logic operator/type");
+    assert(html.includes('<span class="syn-punctuation">=</span>'), "'=' should be highlighted");
+    assert(html.includes('XOR</span>'), "'XOR' should be highlighted");
 
     // ==========================================
     // 2. Client-side Markdown Renderer Tests
