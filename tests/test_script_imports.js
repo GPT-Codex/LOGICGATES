@@ -353,4 +353,188 @@ function createTestSetup() {
     console.log("  ✓ Atomic rollback on failed import passed");
 }
 
+// 12. Path Traversal Security Rejection
+{
+    const virtualFiles = {
+        "outside.sim": `const SECRET = 42`
+    };
+
+    const { cmdEngine } = createTestSetup();
+    const script = `import "../outside.sim"`;
+
+    const res = cmdEngine.executeScript(script, { virtualFiles, filePath: "main.sim" });
+    assert.strictEqual(res.success, false);
+    assert.ok(res.error.includes("traverses outside project root"));
+    console.log("  ✓ Path traversal security rejection passed");
+}
+
+// 13. Support for `import "lib/logic.sim"` and `import "./lib/logic.sim"`
+{
+    const virtualFiles = {
+        "lib/logic.sim": `
+            module INV {
+                input A
+                output Y
+                expr Y = NOT A
+            }
+        `
+    };
+
+    const { registry, cmdEngine } = createTestSetup();
+    const script = `
+        import "lib/logic.sim"
+        add INV I1
+    `;
+
+    const res = cmdEngine.executeScript(script, { virtualFiles, filePath: "main.sim" });
+    assert.strictEqual(res.success, true, res.error);
+    assert.ok(registry.get("mod_inv"));
+    console.log("  ✓ Import without leading ./ passed");
+}
+
+// 14. Deeply Nested Directory Imports (`../` resolution)
+{
+    const virtualFiles = {
+        "lib/logic.sim": `
+            module BUF_GATE {
+                input A
+                output Y
+                expr Y = A
+            }
+        `,
+        "lib/deeper/arithmetic.sim": `
+            import "../logic.sim"
+            module PASS_THRU {
+                input A
+                output Y
+                add BUF_GATE BG
+                connect A -> BG.A
+                connect BG.Y -> Y
+            }
+        `
+    };
+
+    const { registry, cmdEngine } = createTestSetup();
+    const script = `
+        import "./lib/deeper/arithmetic.sim"
+        add PASS_THRU PT
+    `;
+
+    const res = cmdEngine.executeScript(script, { virtualFiles, filePath: "main.sim" });
+    assert.strictEqual(res.success, true, res.error);
+    assert.ok(registry.get("mod_buf_gate"));
+    assert.ok(registry.get("mod_pass_thru"));
+    console.log("  ✓ Deeply nested relative imports passed");
+}
+
+// 15. Missing File Chain Diagnostics
+{
+    const virtualFiles = {
+        "lib/arithmetic.sim": `
+            import "./missing.sim"
+        `
+    };
+
+    const { cmdEngine } = createTestSetup();
+    const script = `import "./lib/arithmetic.sim"`;
+
+    const res = cmdEngine.executeScript(script, { virtualFiles, filePath: "main.sim" });
+    assert.strictEqual(res.success, false);
+    assert.ok(res.error.includes("main.sim"));
+    assert.ok(res.error.includes("imports lib/arithmetic.sim"));
+    assert.ok(res.error.includes("imports ./missing.sim"));
+    assert.ok(res.error.includes("ERROR: file not found"));
+    console.log("  ✓ Missing file chain diagnostics passed");
+}
+
+// 16. Parameterized Imported Modules Instantiation
+{
+    const virtualFiles = {
+        "lib/param.sim": `
+            module MULTI_RCA(width) {
+                input A[0..width-1]
+                output Y[0..width-1]
+                for i in 0..width-1 {
+                    add buffer B[i]
+                    connect A[i] -> B[i].in
+                    connect B[i].out -> Y[i]
+                }
+            }
+        `
+    };
+
+    const { circuit, registry, cmdEngine } = createTestSetup();
+    const script = `
+        import "./lib/param.sim"
+
+        add MULTI_RCA(4) ADD4
+        add MULTI_RCA(8) ADD8
+        add MULTI_RCA(16) ADD16
+    `;
+
+    const res = cmdEngine.executeScript(script, { virtualFiles, filePath: "main.sim" });
+    assert.strictEqual(res.success, true, res.error);
+    assert.ok(registry.get("mod_multi_rca"));
+    assert.ok(circuit.components.get("ADD4"));
+    assert.ok(circuit.components.get("ADD8"));
+    assert.ok(circuit.components.get("ADD16"));
+    console.log("  ✓ Parameterized imported modules instantiation passed");
+}
+
+// 17. REPL Terminal Import Command
+{
+    const { circuit, registry, cmdEngine } = createTestSetup();
+    circuit.files = {
+        "lib/term.sim": `
+            module TERM_MOD {
+                input A
+                output Y
+                expr Y = A
+            }
+        `
+    };
+
+    const execRes = cmdEngine.execute('import "./lib/term.sim"');
+    assert.strictEqual(execRes.success, true, execRes.error);
+    assert.ok(registry.get("mod_term_mod"));
+    console.log("  ✓ REPL terminal import command passed");
+}
+
+// 18. Save / Load Project State with Files Map
+{
+    const { serializeCircuit, deserializeCircuit } = await import("../frontend/js/simulation/serialization.js");
+    const { circuit, registry, cmdEngine } = createTestSetup();
+
+    circuit.files = {
+        "lib/saved.sim": `
+            module SAVED_MOD {
+                input A
+                output Y
+                expr Y = A
+            }
+        `
+    };
+
+    const snap = serializeCircuit(circuit, registry);
+    assert.ok(snap.files);
+    assert.ok(snap.files["lib/saved.sim"]);
+
+    const newCircuit = new Circuit();
+    const newRegistry = new ModuleRegistry();
+    const newEngine = new SimulationEngine(newCircuit);
+    const newCmdEngine = new CommandEngine(newCircuit, newRegistry, null, newEngine);
+
+    deserializeCircuit(snap, newCircuit, newRegistry);
+    assert.ok(newCircuit.files["lib/saved.sim"]);
+
+    const script = `
+        import "./lib/saved.sim"
+        add SAVED_MOD S1
+    `;
+    const res = newCmdEngine.executeScript(script);
+    assert.strictEqual(res.success, true, res.error);
+    assert.ok(newRegistry.get("mod_saved_mod"));
+    console.log("  ✓ Save/load project state with files map passed");
+}
+
 console.log("All Script Constants & Libraries unit tests passed successfully!");

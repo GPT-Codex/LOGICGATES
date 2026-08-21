@@ -250,6 +250,8 @@ export class Circuit {
         this.wires = new Map();
         /** @type {Map<string, Bus>} */
         this.buses = new Map();
+        /** @type {Object.<string, string>} */
+        this.files = {};
     }
 
     addComponent(comp) {
@@ -290,5 +292,6 @@ export class Circuit {
         this.components.clear();
         this.wires.clear();
         this.buses.clear();
+        this.files = {};
     }
 }

@@ -25,7 +25,11 @@ export function normalizePath(pathStr) {
     for (const part of parts) {
         if (!part || part === ".") continue;
         if (part === "..") {
-            if (stack.length > 0) stack.pop();
+            if (stack.length > 0) {
+                stack.pop();
+            } else {
+                throw new Error(`Access denied: path '${pathStr}' traverses outside project root`);
+            }
         } else {
             stack.push(part);
         }
@@ -57,10 +61,28 @@ export function resolveImportPath(importPath, importingFilePath = "main.sim") {
  * @returns {string}
  */
 export function defaultFileResolver(filePath, virtualFiles = {}) {
-    const normPath = normalizePath(filePath);
-    if (virtualFiles && Object.prototype.hasOwnProperty.call(virtualFiles, normPath)) {
-        return virtualFiles[normPath];
+    let normPath = "";
+    try {
+        normPath = normalizePath(filePath);
+    } catch (e) {
+        throw new Error(`Cannot find file '${filePath}'`);
     }
+
+    if (virtualFiles) {
+        if (Object.prototype.hasOwnProperty.call(virtualFiles, normPath)) {
+            return virtualFiles[normPath];
+        }
+        for (const k of Object.keys(virtualFiles)) {
+            try {
+                if (normalizePath(k) === normPath) {
+                    return virtualFiles[k];
+                }
+            } catch (e) {
+                // skip
+            }
+        }
+    }
+
     if (typeof process !== "undefined" && process.versions && process.versions.node) {
         try {
             const fs = eval("require('fs')");
@@ -79,7 +101,8 @@ export function defaultFileResolver(filePath, virtualFiles = {}) {
             // fs not available
         }
     }
-    throw new Error(`File not found: '${filePath}'`);
+
+    throw new Error(`Cannot find file '${filePath}' (Resolved path: '${normPath}')`);
 }
 
 /**
@@ -191,8 +214,8 @@ export function processScriptImports(mainScriptText, mainFilePath = "main.sim", 
     const fileTexts = new Map();
     fileTexts.set(mainNormPath, mainScriptText);
 
-    // Recursively collect imports
-    function collectImports(currPath, scriptContent) {
+    // Recursively collect imports with dependency chain tracking
+    function collectImports(currPath, scriptContent, chain = [mainNormPath]) {
         const lines = scriptContent.split(/\r?\n/);
         for (const rawLine of lines) {
             let line = rawLine;
@@ -203,24 +226,40 @@ export function processScriptImports(mainScriptText, mainFilePath = "main.sim", 
             const importMatch = trimmed.match(/^import\s+["']([^"']+)["']/i);
             if (importMatch) {
                 const rawImport = importMatch[1];
-                const resolvedTarget = resolveImportPath(rawImport, currPath);
+                let resolvedTarget;
+                try {
+                    resolvedTarget = resolveImportPath(rawImport, currPath);
+                } catch (e) {
+                    throw new Error(`Import error in ${currPath}:\nCannot resolve '${rawImport}': ${e.message}`);
+                }
 
                 importGraph.addImportDependency(currPath, resolvedTarget);
 
                 if (!fileTexts.has(resolvedTarget)) {
+                    const nextChain = [...chain, resolvedTarget];
                     try {
                         const targetContent = fileResolver(resolvedTarget);
                         fileTexts.set(resolvedTarget, targetContent);
-                        collectImports(resolvedTarget, targetContent);
+                        collectImports(resolvedTarget, targetContent, nextChain);
                     } catch (e) {
-                        throw new Error(`Error compiling ${currPath}:\nCannot import '${rawImport}': ${e.message}`);
+                        if (e && e.message && e.message.startsWith("Import error")) {
+                            throw e;
+                        }
+                        if (chain.length > 1) {
+                            const chainFormatted = chain.map((p, idx) => "  ".repeat(idx) + (idx === 0 ? p : `imports ${p}`)).join("\n") +
+                                "\n" + "  ".repeat(chain.length) + `imports ${rawImport}\n` +
+                                "  ".repeat(chain.length + 1) + `ERROR: file not found`;
+                            throw new Error(`Import error:\n${chainFormatted}`);
+                        } else {
+                            throw new Error(`Import error in ${currPath}:\n\nCannot find:\n${rawImport}\n\nResolved path:\n${resolvedTarget}`);
+                        }
                     }
                 }
             }
         }
     }
 
-    collectImports(mainNormPath, mainScriptText);
+    collectImports(mainNormPath, mainScriptText, [mainNormPath]);
 
     // Check for circular imports
     const cycle = importGraph.detectCycle();
