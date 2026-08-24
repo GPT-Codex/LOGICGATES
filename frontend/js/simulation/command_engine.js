@@ -108,6 +108,11 @@ export class CommandEngine {
             return this._handleShowModule(parts[2]);
         }
 
+        // Handle show import command: show import ALIAS
+        if (cmd === "show" && parts.length >= 3 && parts[1].toLowerCase() === "import") {
+            return this._handleShowImport(parts[2].trim());
+        }
+
         // Handle show library command: show library "PATH"
         if (cmd === "show" && parts.length >= 3 && parts[1].toLowerCase() === "library") {
             return this._handleShowLibrary(parts.slice(2).join(" ").trim());
@@ -253,7 +258,7 @@ export class CommandEngine {
 
         // Check for parameterized instantiation: TYPE(ARGS)
         let paramArgsStr = null;
-        const argMatch = rawTypeStr.match(/^([a-zA-Z0-9_\s]+)\(([^)]*)\)$/);
+        const argMatch = rawTypeStr.match(/^([a-zA-Z0-9_\s\.]+)\(([^)]*)\)$/);
         if (argMatch) {
             rawTypeStr = argMatch[1].trim();
             paramArgsStr = argMatch[2].trim();
@@ -265,11 +270,55 @@ export class CommandEngine {
         let customDef = null;
 
         if (!actualType && this.registry) {
+            const candidates = [];
             for (const def of this.registry.definitions.values()) {
-                if (def.id.toLowerCase() === typeCandidate || def.name.toLowerCase() === typeCandidate) {
-                    customDef = def;
+                const matchesQualified = def.aliases && def.aliases.some(a => `${a}.${def.name}`.toLowerCase() === typeCandidate);
+                const matchesDirect = def.id.toLowerCase() === typeCandidate || def.name.toLowerCase() === typeCandidate;
+                if (matchesQualified || matchesDirect) {
+                    if (!candidates.includes(def)) {
+                        candidates.push(def);
+                    }
+                }
+            }
+
+            if (candidates.length === 1) {
+                customDef = candidates[0];
+                actualType = "UserModule";
+            } else if (candidates.length > 1) {
+                // If direct qualified match exists among candidates, pick it
+                const exactQual = candidates.find(def => def.aliases && def.aliases.some(a => `${a}.${def.name}`.toLowerCase() === typeCandidate));
+                if (exactQual) {
+                    customDef = exactQual;
                     actualType = "UserModule";
-                    break;
+                } else {
+                    // Check if candidates belong to different source files or aliases
+                    const sourceFiles = new Set(candidates.map(c => c.sourceFile || c.id));
+                    if (sourceFiles.size === 1) {
+                        customDef = candidates[0];
+                        actualType = "UserModule";
+                    } else {
+                        const refs = candidates.map(def => def.aliases && def.aliases.length > 0 ? `${def.aliases[0]}.${def.name}` : def.name);
+                        return {
+                            success: false,
+                            error: `Ambiguous module '${rawTypeStr}'.\n\nCandidates:\n${refs.map(r => `  ${r}`).join("\n")}`
+                        };
+                    }
+                }
+            } else {
+                // Check if user requested a qualified name like math.RCA16 that does not exist
+                if (typeCandidate.includes(".")) {
+                    const dotIdx = rawTypeStr.indexOf(".");
+                    const prefixAlias = rawTypeStr.substring(0, dotIdx);
+                    const requestedSymbol = rawTypeStr.substring(dotIdx + 1);
+
+                    const aliasDefs = Array.from(this.registry.definitions.values()).filter(def => def.aliases && def.aliases.some(a => a.toLowerCase() === prefixAlias.toLowerCase()));
+                    if (aliasDefs.length > 0) {
+                        const availSymbols = aliasDefs.map(def => def.name);
+                        return {
+                            success: false,
+                            error: `Unknown imported module '${rawTypeStr}'.\n\nAvailable symbols from alias '${prefixAlias}':\n${availSymbols.map(s => `  ${s}`).join("\n")}`
+                        };
+                    }
                 }
             }
         }
@@ -849,6 +898,38 @@ export class CommandEngine {
         return { success: true, data: output, message: output };
     }
 
+    _handleShowImport(alias) {
+        if (!alias) {
+            return { success: false, error: "Syntax: show import ALIAS" };
+        }
+
+        if (!this.registry) {
+            return { success: false, error: "ModuleRegistry not available" };
+        }
+
+        const matchingDefs = Array.from(this.registry.definitions.values()).filter(
+            def => def.aliases && def.aliases.some(a => a.toLowerCase() === alias.toLowerCase())
+        );
+
+        if (matchingDefs.length === 0) {
+            return { success: false, error: `Unknown import alias '${alias}'` };
+        }
+
+        const sourceFile = matchingDefs[0].sourceFile || "(unknown)";
+        const moduleNames = matchingDefs.map(def => def.name);
+
+        const lines = [
+            `Alias: ${alias}`,
+            `Source File: ${sourceFile}`,
+            "",
+            "Exported Modules:",
+            ...moduleNames.map(m => `  - ${m}`)
+        ];
+
+        const output = lines.join("\n");
+        return { success: true, data: output, message: output };
+    }
+
     async _handleShowLibrary(rawPath) {
         if (!rawPath) {
             return { success: false, error: "Syntax: show library \"PATH\"" };
@@ -1392,19 +1473,24 @@ export class CommandEngine {
                 return { success: false, error: e.message };
             }
 
-            const moduleMap = new Map();
-            for (const mDef of allModuleDefs) {
-                moduleMap.set(mDef.name.toLowerCase(), mDef);
-            }
-
-            const orderedDefs = topoOrder
-                .map(name => moduleMap.get(name.toLowerCase()))
-                .filter(Boolean);
+            const orderedDefs = topoOrder.flatMap(name =>
+                allModuleDefs.filter(mDef => mDef.name.toLowerCase() === name.toLowerCase())
+            );
 
             for (const mDef of orderedDefs) {
                 try {
+                    let existingDef = findDefinitionByNameAndType(this.registry, mDef.name, "Custom");
+                    if (existingDef && mDef.sourceFile && existingDef.sourceFile && existingDef.sourceFile !== mDef.sourceFile) {
+                        existingDef = null; // Different library files defining same module name
+                    }
+
+                    const modId = existingDef ? existingDef.id : (
+                        mDef.sourceFile
+                            ? `mod_${mDef.sourceFile.replace(/[^a-zA-Z0-9_]/g, "_")}_${mDef.name}`.toLowerCase().replace(/[^a-z0-9_]/g, "_")
+                            : `mod_${mDef.name}`.toLowerCase().replace(/[^a-z0-9_]/g, "_")
+                    );
+
                     if (mDef.params && mDef.params.length > 0) {
-                        const modId = `mod_${mDef.name.toLowerCase().replace(/[^a-z0-9_]/g, "_")}`;
                         const templateDef = new ModuleDefinition(
                             modId,
                             mDef.name,
@@ -1416,13 +1502,16 @@ export class CommandEngine {
                         );
                         templateDef.rawBodyText = mDef.rawBodyText;
                         templateDef.startLine = mDef.startLine;
+                        templateDef.sourceFile = mDef.sourceFile || "";
+                        templateDef.aliases = mDef.aliases || [];
 
                         if (this.registry) {
-                            const existingDef = findDefinitionByNameAndType(this.registry, templateDef.name, templateDef.type || "Custom");
                             if (existingDef) {
                                 existingDef.params = mDef.params;
                                 existingDef.rawBodyText = mDef.rawBodyText;
                                 existingDef.startLine = mDef.startLine;
+                                existingDef.sourceFile = mDef.sourceFile || "";
+                                existingDef.aliases = mDef.aliases || [];
                             } else {
                                 this.registry.register(templateDef);
                             }
@@ -1437,15 +1526,19 @@ export class CommandEngine {
                             SimulationEngine,
                             importedRes.resolvedConstants
                         );
+                        compiledDef.id = modId;
+                        compiledDef.sourceFile = mDef.sourceFile || "";
+                        compiledDef.aliases = mDef.aliases || [];
 
                         if (this.registry) {
-                            const existingDef = findDefinitionByNameAndType(this.registry, compiledDef.name, compiledDef.type || "Custom");
                             if (existingDef) {
                                 existingDef.inputs = compiledDef.inputs;
                                 existingDef.outputs = compiledDef.outputs;
                                 existingDef.components = compiledDef.components;
                                 existingDef.wires = compiledDef.wires;
                                 existingDef.dependencies = compiledDef.dependencies;
+                                existingDef.sourceFile = mDef.sourceFile || "";
+                                existingDef.aliases = mDef.aliases || [];
                             } else {
                                 this.registry.register(compiledDef);
                             }

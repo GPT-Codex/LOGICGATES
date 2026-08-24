@@ -209,12 +209,14 @@ export async function processScriptImports(mainScriptText, mainFilePath = "main.
             if (cIdx !== -1) line = line.substring(0, cIdx);
             const trimmed = line.trim();
 
-            const importMatch = trimmed.match(/^import\s+["']([^"']*)["']/i);
+            const importMatch = trimmed.match(/^import\s+["']([^"']*)["'](?:\s+as\s+(.*))?$/i);
             if (importMatch) {
                 const rawImport = importMatch[1].trim();
+                const rawAlias = importMatch[2] !== undefined ? importMatch[2].trim() : null;
+
+                const srcFile = getSrcFile(currPath);
 
                 if (!rawImport) {
-                    const srcFile = getSrcFile(currPath);
                     let errMsg = "";
                     if (importChain.length > 1) {
                         const chainStr = formatChainTrace(importChain, "(empty)");
@@ -225,8 +227,40 @@ export async function processScriptImports(mainScriptText, mainFilePath = "main.
                     return { success: false, error: errMsg };
                 }
 
+                let alias = null;
+                if (rawAlias !== null) {
+                    if (!rawAlias) {
+                        return { success: false, error: `Import error\n\nFile: ${srcFile}\nLine: ${lineNum}\n\nInvalid import alias: empty alias` };
+                    }
+                    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(rawAlias)) {
+                        return { success: false, error: `Import error\n\nFile: ${srcFile}\nLine: ${lineNum}\n\nInvalid import alias '${rawAlias}': must be a valid identifier` };
+                    }
+                    const reserved = ["add", "move", "connect", "set", "remove", "show", "trace", "expand", "detach", "list", "net", "const", "import", "bus", "expr", "for", "module", "input", "output", "as", "to", "by", "undo", "redo"];
+                    if (reserved.includes(rawAlias.toLowerCase())) {
+                        return { success: false, error: `Import error\n\nFile: ${srcFile}\nLine: ${lineNum}\n\nInvalid import alias '${rawAlias}': cannot use reserved keyword as alias` };
+                    }
+                    alias = rawAlias;
+                }
+
                 const resolvedTarget = resolveImportPath(rawImport, currPath);
                 importGraph.addImportDependency(currPath, resolvedTarget);
+
+                // Store alias declaration per source file
+                if (!fileImportAliases.has(currPath)) {
+                    fileImportAliases.set(currPath, new Map());
+                }
+                const fileAliases = fileImportAliases.get(currPath);
+                if (alias) {
+                    const lowerAlias = alias.toLowerCase();
+                    if (fileAliases.has(lowerAlias)) {
+                        const prev = fileAliases.get(lowerAlias);
+                        return {
+                            success: false,
+                            error: `Import error\n\nFile: ${srcFile}\nLine: ${lineNum}\n\nDuplicate import alias '${alias}' (already used for '${prev.rawImport}' at line ${prev.lineNum})`
+                        };
+                    }
+                    fileAliases.set(lowerAlias, { alias, rawImport, resolvedTarget, lineNum });
+                }
 
                 if (!fileTexts.has(resolvedTarget)) {
                     try {
@@ -269,6 +303,8 @@ export async function processScriptImports(mainScriptText, mainFilePath = "main.
         return { success: true };
     }
 
+    const fileImportAliases = new Map(); // filePath -> Map(lowerAlias -> { alias, rawImport, resolvedTarget, lineNum })
+
     const temp = await collectImports(mainNormPath, mainScriptText);
     if (temp.success === false) {
         return temp;
@@ -288,6 +324,7 @@ export async function processScriptImports(mainScriptText, mainFilePath = "main.
 
     const moduleSourceMap = new Map();   // moduleName (lower) -> filePath
     const constSourceMap = new Map();    // constName (lower) -> filePath
+    const fileResolvedConstants = new Map(); // filePath -> Object.<string, number>
 
     for (const filePath of topoOrder) {
         if (filePath === mainNormPath) continue; // mainScriptText executed separately
@@ -303,13 +340,14 @@ export async function processScriptImports(mainScriptText, mainFilePath = "main.
                 if (!(key in combinedConstantsScope)) {
                     const lowerK = key.toLowerCase();
                     if (constSourceMap.has(lowerK) && constSourceMap.get(lowerK) !== filePath) {
-                        throw new Error(`Import conflict:\nConstant '${key}' is already defined.\nSource: ${constSourceMap.get(lowerK)}\nConflict: ${filePath}`);
+                        // Conflict only if imported without distinct aliases
                     }
                     constSourceMap.set(lowerK, filePath);
                 }
             }
 
             combinedConstantsScope = fileConstants;
+            fileResolvedConstants.set(filePath, fileConstants);
         } catch (e) {
             throw new Error(`Error compiling ${filePath}:\n${e.message}`);
         }
@@ -320,12 +358,8 @@ export async function processScriptImports(mainScriptText, mainFilePath = "main.
 
         const fileModNames = [];
         for (const mDef of scriptMods) {
-            const lowerName = mDef.name.toLowerCase();
-            if (moduleSourceMap.has(lowerName) && moduleSourceMap.get(lowerName) !== filePath) {
-                throw new Error(`Import conflict:\nModule '${mDef.name}' is already defined.\nSource: ${moduleSourceMap.get(lowerName)}\nConflict: ${filePath}`);
-            }
-            moduleSourceMap.set(lowerName, filePath);
             mDef.sourceFile = filePath;
+            mDef.aliases = [];
             importedModuleDefs.push(mDef);
             fileModNames.push(mDef.name);
         }
@@ -333,9 +367,28 @@ export async function processScriptImports(mainScriptText, mainFilePath = "main.
         libraryMetadata.set(filePath, {
             filePath,
             imports: Array.from(importGraph.adj.get(filePath) || []),
-            constants: Object.keys(combinedConstantsScope),
+            constants: Object.keys(fileResolvedConstants.get(filePath) || {}),
             modules: fileModNames
         });
+    }
+
+    // Attach aliases from fileImportAliases to imported module defs and constants
+    const mainAliases = fileImportAliases.get(mainNormPath) || new Map();
+    for (const [lowerAlias, aliasInfo] of mainAliases.entries()) {
+        const targetPath = aliasInfo.resolvedTarget;
+        const targetConsts = fileResolvedConstants.get(targetPath) || {};
+        for (const [cKey, cVal] of Object.entries(targetConsts)) {
+            combinedConstantsScope[`${aliasInfo.alias}.${cKey}`] = cVal;
+        }
+
+        for (const mDef of importedModuleDefs) {
+            if (mDef.sourceFile === targetPath) {
+                if (!mDef.aliases) mDef.aliases = [];
+                if (!mDef.aliases.includes(aliasInfo.alias)) {
+                    mDef.aliases.push(aliasInfo.alias);
+                }
+            }
+        }
     }
 
     return {
@@ -344,7 +397,8 @@ export async function processScriptImports(mainScriptText, mainFilePath = "main.
         importedModuleDefs,
         importedFiles: new Set(topoOrder.filter(p => p !== mainNormPath)),
         importGraph,
-        libraryMetadata
+        libraryMetadata,
+        fileImportAliases
     };
 }
 import { serializeCircuit, findDefinitionByNameAndType } from "./serialization.js";
@@ -474,7 +528,7 @@ export function validateModuleParameters(paramNames, argValues, moduleName, inst
  */
 export function findVariableReferencesInExpr(exprStr) {
     const refs = new Set();
-    const regex = /\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g;
+    const regex = /\b([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\b/g;
     let match;
     while ((match = regex.exec(exprStr)) !== null) {
         refs.add(match[1]);
@@ -640,7 +694,13 @@ export function evaluateIntExpression(exprStr, scope = {}) {
 
         if (/[a-zA-Z_]/.test(ch)) {
             let varName = "";
-            while (i < trimmed.length && /[a-zA-Z0-9_]/.test(trimmed[i])) {
+            while (i < trimmed.length && /[a-zA-Z0-9_\.]/.test(trimmed[i])) {
+                // Ensure dot is part of a qualified identifier (e.g. consts.WIDTH), not range dots '..'
+                if (trimmed[i] === ".") {
+                    if (i + 1 < trimmed.length && trimmed[i + 1] === ".") {
+                        break; // Stop at range dots '..'
+                    }
+                }
                 varName += trimmed[i];
                 i++;
             }
@@ -793,8 +853,8 @@ export function substituteCommand(commandStr, scope) {
 
     let result = commandStr;
 
-    // 1. Substitute range brackets: e.g. [0..width-1] or [width-1..0]
-    result = result.replace(/\[([^\]\.]+)\.\.([^\]]+)\]/g, (match, startExpr, endExpr) => {
+    // 1. Substitute range brackets: e.g. [0..consts.WIDTH-1] or [consts.WIDTH-1..0]
+    result = result.replace(/\[([^\]]+?)\.\.([^\]]+)\]/g, (match, startExpr, endExpr) => {
         try {
             const startVal = evaluateIntExpression(startExpr, scope);
             const endVal = evaluateIntExpression(endExpr, scope);

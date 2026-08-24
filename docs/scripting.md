@@ -20,7 +20,7 @@ The `.sim` circuit scripting language allows you to create, modify, connect, and
 | `list` | `list` | List all components, buses, and wires in the active circuit. |
 | `net` | `net NAME` | Create a net signal node (buffer pass-through). |
 | `const` | `const NAME = EXPR` | Declare an immutable compile-time integer constant. |
-| `import` | `import "module"` | Import reusable constants and module definitions from a server library file (`PROJECT_ROOT/lib/<module>.sim`). |
+| `import` | `import "module"` / `import "module" as alias` | Import reusable constants and module definitions with optional namespace aliases. |
 | `bus` | `bus NAME[START..END]` | Declare a first-class $N$-bit bus vector. |
 | `expr` | `expr OUTPUT = BOOLEAN_EXPRESSION` | Synthesize a boolean expression into gates and wires. |
 | `for` | `for VAR in START..END { ... }` | Loop over an inclusive numerical range. |
@@ -210,32 +210,27 @@ Constants can be used anywhere compile-time integer expressions are accepted:
 Import reusable constants and module definitions from server-provided `.sim` library files:
 
 ```sim
-import "logic"
+import "logic" as logic
+import "arithmetic" as arithmetic
 ```
 
-### Import Semantics
-- **Server-Backed Library Loading:** `import "module"` issues an HTTP request to the server endpoint `/api/import`, which loads the module file from `PROJECT_ROOT/lib/<module>.sim` (for example, `import "logic"` loads `PROJECT_ROOT/lib/logic.sim`).
-- **Definitions-Only Loading:** `import` pre-resolves compile-time constants and registers `module` definitions in the module registry without directly instantiating components on the canvas. Instantiation requires explicit `add` commands in your script.
-- **Deduplication:** Multiple imports requesting the same module (e.g. `import "logic"` in multiple files) fetch and process the library at most once.
-- **Circular Import Detection:** Circular import dependencies (e.g. `arithmetic → logic → arithmetic`) are detected and rejected prior to compilation.
-- **Error Diagnostics:** Import failures provide detailed context, including the source file, 1-based line number, requested module, expected server path (`lib/<module>.sim`), and the full nested import chain formatting:
+### Import Semantics & Namespaces
+- **Import Aliases:** Import statements support `import "module" as alias`. The alias establishes a local namespace for symbols provided by that library.
+- **Qualified Module References:** Definitions are referenced using dot notation (e.g. `add logic.FADDER F0` or `add arithmetic.RCA(16) ADD16`).
+- **Qualified Constants:** Compile-time constants defined in aliased imports are referenced via dot notation (e.g., `bus A[0..consts.WIDTH-1]`).
+- **Name Disambiguation:** If two imported libraries contain conflicting symbol names (e.g., both define `MUX`), using aliases prevents name collisions (`add l1.MUX MUX_A` and `add l2.MUX MUX_B`).
+- **Unqualified References & Ambiguity Errors:** Unqualified names (`add FADDER F0`) remain supported when unambiguous. If multiple aliased libraries contain candidate definitions for an unqualified name, execution aborts with a descriptive ambiguity error listing candidate choices:
   ```text
-  Import error
+  Ambiguous module 'FADDER'.
 
-  main.sim
-    → arithmetic
-        → logic
-            → missing
-
-  Source file: logic.sim
-  Line: 12
-
-  Module not found: missing
-  Expected server library:
-  lib/missing.sim
+  Candidates:
+    l1.FADDER
+    l2.FADDER
   ```
+- **Transitive Dependency Scope:** Qualified imported modules internally referencing other modules maintain their internal dependency chains without requiring outer scripts to re-alias nested dependencies.
+- **Inspection Command:** `show import ALIAS` reports the alias name, target library path, and exported module definitions.
 
-### Multi-File Server Library Structure Example
+### Multi-File Server Library Structure Example with Aliases
 
 #### `PROJECT_ROOT/lib/logic.sim`
 ```sim
@@ -253,15 +248,49 @@ module FADDER {
 }
 ```
 
+#### `PROJECT_ROOT/lib/arithmetic.sim`
+```sim
+import "logic"
+
+const MAX_WIDTH = 256
+
+module RCA(width) {
+    input A[0..width-1]
+    input B[0..width-1]
+    input Cin
+
+    output S[0..width-1]
+    output Cout
+
+    add FADDER FA[0]
+    connect A[0] -> FA[0].A
+    connect B[0] -> FA[0].B
+    connect Cin -> FA[0].Cin
+    connect FA[0].S -> S[0]
+
+    for i in 1..width-1 {
+        add FADDER FA[i]
+        connect A[i] -> FA[i].A
+        connect B[i] -> FA[i].B
+        connect FA[i - 1].Cout -> FA[i].Cin
+        connect FA[i].S -> S[i]
+    }
+
+    connect FA[width - 1].Cout -> Cout
+}
+```
+
 #### `main.sim`
 ```sim
-# Top-level project script loading server library
-import "logic"
+# Top-level project script loading server library with aliases
+import "logic" as logic
+import "arithmetic" as math
 
 add input A
 add input B
 add input Cin
-add FADDER FA0
+add logic.FADDER FA0
+add math.RCA(16) ADD16
 add output S
 add output Cout
 

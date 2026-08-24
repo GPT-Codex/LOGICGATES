@@ -115,7 +115,7 @@ async function runAllImportTests() {
         const res = await cmdEngine.executeScript(script, { fileResolver, filePath: "main.sim" });
         assert.strictEqual(res.success, true, res.error);
 
-        assert.ok(registry.get("mod_not_gate"));
+        assert.ok(registry.get("mod_gates_sim_not_gate") || registry.get("mod_not_gate"));
         assert.ok(circuit.components.get("N1"));
         console.log("  ✓ Basic import and relative path resolution passed");
     }
@@ -197,8 +197,8 @@ async function runAllImportTests() {
         const res = await cmdEngine.executeScript(mainScript, { fileResolver, filePath: "main.sim" });
         assert.strictEqual(res.success, true, res.error);
 
-        assert.ok(registry.get("mod_fadder"));
-        assert.ok(registry.get("mod_rca"));
+        assert.ok(registry.get("mod_logic_sim_fadder") || registry.get("mod_fadder"));
+        assert.ok(registry.get("mod_arithmetic_sim_rca") || registry.get("mod_rca"));
 
         // Verify electrical truth table (9 + 5 + 1 = 15)
         circuit.components.get("Cin").stateValue = 1;
@@ -268,7 +268,7 @@ async function runAllImportTests() {
 
         const res = await cmdEngine.executeScript(script, { fileResolver, filePath: "main.sim" });
         assert.strictEqual(res.success, true, res.error);
-        assert.ok(registry.get("mod_buf1"));
+        assert.ok(registry.get("mod_common_sim_buf1") || registry.get("mod_buf1"));
         console.log("  ✓ Duplicate import deduplication passed");
     }
 
@@ -408,6 +408,126 @@ async function runAllImportTests() {
         assert.strictEqual(dst10.inputs[0].value, 1, "Signal at index 10 must map precisely to Out[10] without index shifting");
 
         console.log("  ✓ Natural pin ordering (Indexed pins, multi-digit, parameterized, wiring mapping) passed");
+    }
+
+    // 10. Import Alias Unit Tests
+    {
+        const virtualFiles = {
+            "logic.sim": `
+                module FADDER {
+                    input A
+                    input B
+                    input Cin
+                    output S
+                    output Cout
+                    expr S = (A XOR B) XOR Cin
+                    expr Cout = (A AND B) OR (Cin AND (A XOR B))
+                }
+            `,
+            "arithmetic.sim": `
+                import "logic.sim"
+                const MAX_WIDTH = 256
+                module RCA(width) {
+                    input A[0..width-1]
+                    input B[0..width-1]
+                    input Cin
+                    output S[0..width-1]
+                    output Cout
+                    add FADDER FA[0]
+                    connect A[0] -> FA[0].A
+                    connect B[0] -> FA[0].B
+                    connect Cin -> FA[0].Cin
+                    connect FA[0].S -> S[0]
+                    for i in 1..width-1 {
+                        add FADDER FA[i]
+                        connect A[i] -> FA[i].A
+                        connect B[i] -> FA[i].B
+                        connect FA[i - 1].Cout -> FA[i].Cin
+                        connect FA[i].S -> S[i]
+                    }
+                    connect FA[width - 1].Cout -> Cout
+                }
+            `,
+            "consts.sim": `
+                const BUS_WIDTH = 8
+            `
+        };
+
+        const fileResolver = async (path) => {
+            if (virtualFiles[path] || virtualFiles[`lib/${path}`] || virtualFiles[`${path}.sim`]) {
+                return { INFO: "OK", DATA: virtualFiles[path] || virtualFiles[`lib/${path}`] || virtualFiles[`${path}.sim`] };
+            }
+            return { INFO: "ERROR", MODULE: path, PATH: `lib/${path}.sim`, ERROR: "Module not found", DATA: `${path}: Module not found!` };
+        };
+
+        // 10a. Basic Alias Import, Qualified Module, and Qualified Constant
+        const { cmdEngine, circuit } = createTestSetup();
+        const script10a = `
+            import "logic.sim" as logic
+            import "arithmetic.sim" as math
+            import "consts.sim" as c
+
+            bus DATA[0..c.BUS_WIDTH-1]
+
+            add logic.FADDER FA0
+            add math.RCA(8) ADD8
+        `;
+        const res10a = await cmdEngine.executeScript(script10a, { fileResolver, filePath: "main.sim" });
+        assert.strictEqual(res10a.success, true, res10a.error);
+        assert.ok(circuit.buses.has("DATA"));
+        assert.strictEqual(circuit.buses.get("DATA").width, 8);
+        assert.ok(circuit.components.get("FA0"));
+        assert.ok(circuit.components.get("ADD8"));
+
+        // 10b. Invalid alias identifier & Duplicate alias rejection
+        const { cmdEngine: cmdEngineErr } = createTestSetup();
+        const script10b = `
+            import "logic.sim" as logic
+            import "arithmetic.sim" as logic
+        `;
+        const res10b = await cmdEngineErr.executeScript(script10b, { fileResolver, filePath: "main.sim" });
+        assert.strictEqual(res10b.success, false);
+        assert.ok(res10b.error.includes("Duplicate import alias 'logic'"));
+
+        // 10c. Collision and Ambiguous Unqualified Reference Rejection
+        const virtualCollisions = {
+            "lib1.sim": "module MUX {\n    input A\n    output Y\n    expr Y = A\n}",
+            "lib2.sim": "module MUX {\n    input A\n    output Y\n    expr Y = A\n}"
+        };
+        const fileResolverColl = async (path) => ({ INFO: "OK", DATA: virtualCollisions[path] || virtualCollisions[`${path}.sim`] });
+
+        const { cmdEngine: cmdEngineAmb } = createTestSetup();
+        const scriptAmb = `
+            import "lib1.sim" as l1
+            import "lib2.sim" as l2
+            add MUX M0
+        `;
+        const resAmb = await cmdEngineAmb.executeScript(scriptAmb, { fileResolver: fileResolverColl, filePath: "main.sim" });
+        assert.strictEqual(resAmb.success, false);
+        assert.ok(resAmb.error.includes("Ambiguous module 'MUX'"));
+        assert.ok(resAmb.error.includes("l1.MUX"));
+        assert.ok(resAmb.error.includes("l2.MUX"));
+
+        // 10d. Disambiguated Qualified Calls
+        const { cmdEngine: cmdEngineDisamb, circuit: circuitDisamb } = createTestSetup();
+        const scriptDisamb = `
+            import "lib1.sim" as l1
+            import "lib2.sim" as l2
+            add l1.MUX MUX_A
+            add l2.MUX MUX_B
+        `;
+        const resDisamb = await cmdEngineDisamb.executeScript(scriptDisamb, { fileResolver: fileResolverColl, filePath: "main.sim" });
+        assert.strictEqual(resDisamb.success, true, resDisamb.error);
+        assert.ok(circuitDisamb.components.get("MUX_A"));
+        assert.ok(circuitDisamb.components.get("MUX_B"));
+
+        // 10e. show import ALIAS inspection command
+        const showRes = cmdEngineDisamb.execute("show import l1");
+        assert.strictEqual(showRes.success, true);
+        assert.ok(showRes.data.includes("Alias: l1"));
+        assert.ok(showRes.data.includes("Exported Modules:\n  - MUX"));
+
+        console.log("  ✓ Import aliases (syntax, qualified modules/constants, disambiguation, show import) passed");
     }
 
     console.log("All Script Constants & Libraries unit tests passed successfully!");
