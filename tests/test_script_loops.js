@@ -6,7 +6,7 @@ import { HistoryManager } from "../frontend/js/canvas/interactions.js";
 import { CommandEngine } from "../frontend/js/simulation/command_engine.js";
 import { serializeCircuit, deserializeCircuit } from "../frontend/js/simulation/serialization.js";
 
-function runLoopTests() {
+async function runLoopTests() {
     console.log("Running Script Loops & Indexed Arrays unit tests...");
 
     const registry = new ModuleRegistry();
@@ -35,7 +35,7 @@ function runLoopTests() {
         }
     `;
 
-    const r1 = commandEngine.executeScript(rangeScript);
+    const r1 = await commandEngine.executeScript(rangeScript);
     assert(r1.success, `Range script failed: ${r1.error}`);
     assert(circuit.components.has("A[0]"), "A[0] should exist");
     assert(circuit.components.has("A[1]"), "A[1] should exist");
@@ -57,7 +57,7 @@ function runLoopTests() {
         }
     `;
 
-    const r2 = commandEngine.executeScript(loopWiringScript);
+    const r2 = await commandEngine.executeScript(loopWiringScript);
     assert(r2.success, `Loop wiring script failed: ${r2.error}`);
     assert.strictEqual(circuit.components.get("G[0]").x, 0);
     assert.strictEqual(circuit.components.get("G[1]").x, 40);
@@ -82,7 +82,7 @@ function runLoopTests() {
         }
     `;
 
-    const r3 = commandEngine.executeScript(nestedScript);
+    const r3 = await commandEngine.executeScript(nestedScript);
     assert(r3.success, `Nested loop failed: ${r3.error}`);
     assert(circuit.components.has("BUF[0][0]"));
     assert(circuit.components.has("BUF[0][1]"));
@@ -102,7 +102,7 @@ function runLoopTests() {
         }
     `;
 
-    const r4 = commandEngine.executeScript(exprLoopScript);
+    const r4 = await commandEngine.executeScript(exprLoopScript);
     assert(r4.success, `Expression in loop failed: ${r4.error}`);
     assert(circuit.components.has("S[0]"), "Synthesized S[0] should exist");
     assert(circuit.components.has("S[1]"), "Synthesized S[1] should exist");
@@ -134,7 +134,7 @@ function runLoopTests() {
         }
     `;
 
-    const r5 = commandEngine.executeScript(loopGenScript);
+    const r5 = await commandEngine.executeScript(loopGenScript);
     assert(r5.success, `Loop gen failed: ${r5.error}`);
     assert.strictEqual(circuit.components.size, preCountComp + 16);
     assert.strictEqual(circuit.wires.size, preCountWire + 8);
@@ -167,7 +167,7 @@ function runLoopTests() {
         }
     `;
 
-    const failRes = commandEngine.executeScript(failingLoopScript);
+    const failRes = await commandEngine.executeScript(failingLoopScript);
     assert(!failRes.success, "Script should fail due to NON_EXISTENT_COMP");
     assert.strictEqual(failRes.line, 6, "Failure should be on line 6");
     assert(failRes.error.includes("Loop iteration: i = 0"), "Should report loop iteration context 'i = 0'");
@@ -188,7 +188,7 @@ function runLoopTests() {
         }
     `;
 
-    const limitRes = commandEngine.executeScript(runawayScript);
+    const limitRes = await commandEngine.executeScript(runawayScript);
     assert(!limitRes.success, "Runaway script should be aborted by safety limits");
     assert(limitRes.error.includes("exceeded"), "Error should report limit exceeded");
 
@@ -209,4 +209,4 @@ function runLoopTests() {
     console.log("Script Loops & Indexed Arrays unit tests passed successfully!");
 }
 
-runLoopTests();
+await runLoopTests();

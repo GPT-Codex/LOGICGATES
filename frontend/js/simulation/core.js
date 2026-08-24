@@ -2,6 +2,19 @@
  * Core classes for the Digital Logic Simulator: Pin, Wire, Component, and Circuit.
  */
 
+/**
+ * Natural comparison for strings with numeric indices (e.g. B[2] < B[10]).
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+export function naturalCompare(a, b) {
+    if (a === b) return 0;
+    if (a == null) return -1;
+    if (b == null) return 1;
+    return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+}
+
 export class Pin {
     /**
      * @param {string} id 

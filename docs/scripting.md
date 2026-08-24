@@ -20,7 +20,7 @@ The `.sim` circuit scripting language allows you to create, modify, connect, and
 | `list` | `list` | List all components, buses, and wires in the active circuit. |
 | `net` | `net NAME` | Create a net signal node (buffer pass-through). |
 | `const` | `const NAME = EXPR` | Declare an immutable compile-time integer constant. |
-| `import` | `import "PATH"` / `import './PATH'` | Import reusable constants and module definitions from a script library file. |
+| `import` | `import "module"` | Import reusable constants and module definitions from a server library file (`PROJECT_ROOT/lib/<module>.sim`). |
 | `bus` | `bus NAME[START..END]` | Declare a first-class $N$-bit bus vector. |
 | `expr` | `expr OUTPUT = BOOLEAN_EXPRESSION` | Synthesize a boolean expression into gates and wires. |
 | `for` | `for VAR in START..END { ... }` | Loop over an inclusive numerical range. |
@@ -207,24 +207,39 @@ Constants can be used anywhere compile-time integer expressions are accepted:
 
 ## 4. Reusable Script Libraries & Imports (`import`)
 
-Import reusable constants and module definitions from external `.sim` files:
+Import reusable constants and module definitions from server-provided `.sim` library files:
 
 ```sim
-import "./lib/arithmetic.sim"
+import "logic"
 ```
 
 ### Import Semantics
-- **Definitions-Only Loading:** `import` loads constants and compiles `module` blocks into the module registry. Importing a library file **never** places components on the circuit canvas directly; instantiation requires explicit `add` commands in your project script.
-- **Relative Path Resolution:** Paths starting with `./` or `../` are resolved relative to the directory containing the importing script. Standard paths like `std/logic.sim` resolve against the library search paths.
-- **Deduplication:** Multiple imports of the same file (e.g. `import "./logic.sim"` in two different files) load and compile the library at most once.
-- **Circular Import Detection:** Circular import dependencies (`A.sim → B.sim → A.sim`) are rejected before compilation with a clear dependency chain error (`Circular import: A.sim -> B.sim -> A.sim`).
-- **Name Conflict Protection:** If two imported files attempt to define the same module or constant name, execution aborts with a source context conflict error.
+- **Server-Backed Library Loading:** `import "module"` issues an HTTP request to the server endpoint `/api/import`, which loads the module file from `PROJECT_ROOT/lib/<module>.sim` (for example, `import "logic"` loads `PROJECT_ROOT/lib/logic.sim`).
+- **Definitions-Only Loading:** `import` pre-resolves compile-time constants and registers `module` definitions in the module registry without directly instantiating components on the canvas. Instantiation requires explicit `add` commands in your script.
+- **Deduplication:** Multiple imports requesting the same module (e.g. `import "logic"` in multiple files) fetch and process the library at most once.
+- **Circular Import Detection:** Circular import dependencies (e.g. `arithmetic → logic → arithmetic`) are detected and rejected prior to compilation.
+- **Error Diagnostics:** Import failures provide detailed context, including the source file, 1-based line number, requested module, expected server path (`lib/<module>.sim`), and the full nested import chain formatting:
+  ```text
+  Import error
 
-### Multi-File Library Structure Example
+  main.sim
+    → arithmetic
+        → logic
+            → missing
 
-#### `lib/logic.sim`
+  Source file: logic.sim
+  Line: 12
+
+  Module not found: missing
+  Expected server library:
+  lib/missing.sim
+  ```
+
+### Multi-File Server Library Structure Example
+
+#### `PROJECT_ROOT/lib/logic.sim`
 ```sim
-# Gate primitives library
+# Server primitive library
 module FADDER {
     input A
     input B
@@ -233,60 +248,28 @@ module FADDER {
     output S
     output Cout
 
-    expr S = A XOR B XOR Cin
+    expr S = (A XOR B) XOR Cin
     expr Cout = (A AND B) OR (Cin AND (A XOR B))
-}
-```
-
-#### `lib/arithmetic.sim`
-```sim
-# Arithmetic modules library
-import "./logic.sim"
-
-const MAX_WIDTH = 256
-
-module RCA(width) {
-    input A[0..width-1]
-    input B[0..width-1]
-    input Cin
-
-    output S[0..width-1]
-    output Cout
-
-    add FADDER FA[0]
-    connect A[0] -> FA[0].A
-    connect B[0] -> FA[0].B
-    connect Cin -> FA[0].Cin
-    connect FA[0].S -> S[0]
-
-    for i in 1..width-1 {
-        add FADDER FA[i]
-        connect A[i] -> FA[i].A
-        connect B[i] -> FA[i].B
-        connect FA[i - 1].Cout -> FA[i].Cin
-        connect FA[i].S -> S[i]
-    }
-
-    connect FA[width - 1].Cout -> Cout
 }
 ```
 
 #### `main.sim`
 ```sim
-# Top-level project script
-import "./lib/arithmetic.sim"
+# Top-level project script loading server library
+import "logic"
 
-const WORD_SIZE = 16
-
-bus A[0..WORD_SIZE-1]
-bus B[0..WORD_SIZE-1]
-
+add input A
+add input B
 add input Cin
-add RCA(WORD_SIZE) ADD16
+add FADDER FA0
+add output S
 add output Cout
 
-connect Cin -> ADD16.Cin
-connect ADD16.Cout -> Cout
+connect A FA0.A
+connect B FA0.B
+connect Cin FA0.Cin
+connect FA0.S S
+connect FA0.Cout Cout
 ```
 
 ### Restrictions
@@ -345,6 +328,27 @@ move S to (600, 150)
 
 expr S = A XOR B
 ```
+
+---
+
+## 4.1 Natural Numeric Pin Ordering
+
+Module input/output ports and vector buses containing numeric indices (such as `B[0..15]`, `A[0]..A[100]`) are sorted in natural numerical order for visual layout and display:
+
+```text
+B[0]
+B[1]
+B[2]
+...
+B[9]
+B[10]
+B[11]
+...
+B[15]
+```
+
+- **Natural Ordering:** Pin numbers are sorted by their integer values rather than lexicographical string comparison (`B[10]` comes *after* `B[9]`, not before `B[2]`).
+- **Pin Identity Stability:** Natural sorting applies strictly to visual display and layout ordering. Logical pin identifiers (`"B[10]"`) and electrical wire connections remain unchanged and fully deterministic.
 
 ---
 

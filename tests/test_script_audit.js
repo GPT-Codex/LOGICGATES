@@ -6,7 +6,7 @@ import { HistoryManager } from "../frontend/js/canvas/interactions.js";
 import { CommandEngine } from "../frontend/js/simulation/command_engine.js";
 import { serializeCircuit, deserializeCircuit } from "../frontend/js/simulation/serialization.js";
 
-function runAuditTests() {
+async function runAuditTests() {
     console.log("Running Scripting System Audit & Hardening tests...");
 
     const registry = new ModuleRegistry();
@@ -91,7 +91,7 @@ function runAuditTests() {
         connect G2.out INVALID_COMPONENT.in
     `;
 
-    const failRes = commandEngine.executeScript(failingScript);
+    const failRes = await commandEngine.executeScript(failingScript);
     assert(!failRes.success, "Script should fail due to invalid target component");
     assert.strictEqual(failRes.line, 5, "Failure should be reported at line 5");
     assert(failRes.error.includes("Line 5"), "Error message should report line number");
@@ -127,7 +127,7 @@ function runAuditTests() {
         connect AND1 CARRY
     `;
 
-    const scriptRes = commandEngine.executeScript(validScript);
+    const scriptRes = await commandEngine.executeScript(validScript);
     assert(scriptRes.success, `Script execution failed: ${scriptRes.error}`);
 
     const postScriptCompCount = circuit.components.size;
@@ -284,7 +284,7 @@ function runAuditTests() {
     }
 
     const largeScriptStr = scriptLines.join("\n");
-    const stressRes = largeCmdEngine.executeScript(largeScriptStr);
+    const stressRes = await largeCmdEngine.executeScript(largeScriptStr);
     const elapsed = Date.now() - startTime;
 
     assert(stressRes.success, `Large script execution failed: ${stressRes.error}`);
@@ -300,4 +300,4 @@ function runAuditTests() {
     console.log("Scripting System Audit & Hardening tests passed successfully!");
 }
 
-runAuditTests();
+await runAuditTests();

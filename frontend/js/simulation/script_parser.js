@@ -176,39 +176,92 @@ export async function processScriptImports(mainScriptText, mainFilePath = "main.
     const fileTexts = new Map();
     fileTexts.set(mainNormPath, mainScriptText);
 
+    function formatChainTrace(chain, target) {
+        const cleanName = (p, isRoot) => {
+            if (!p) return "";
+            const base = p.split("/").pop();
+            if (isRoot) return base;
+            return base.replace(/\.sim$/i, "");
+        };
+
+        const fullChain = [...chain.map((item, idx) => cleanName(item, idx === 0)), cleanName(target, false)];
+        const lines = [fullChain[0]];
+        for (let i = 1; i < fullChain.length; i++) {
+            const indent = " ".repeat(2 + (i - 1) * 4);
+            lines.push(`${indent}→ ${fullChain[i]}`);
+        }
+        return lines.join("\n");
+    }
+
+    const getSrcFile = (p) => {
+        const base = p.split("/").pop();
+        return base.endsWith(".sim") ? base : `${base}.sim`;
+    };
+
     // Recursively collect imports
-    async function collectImports(currPath, scriptContent) {
+    async function collectImports(currPath, scriptContent, importChain = [currPath]) {
         const lines = scriptContent.split(/\r?\n/);
-        for (const rawLine of lines) {
+        for (let i = 0; i < lines.length; i++) {
+            const lineNum = i + 1;
+            let rawLine = lines[i];
             let line = rawLine;
             const cIdx = line.indexOf("#");
             if (cIdx !== -1) line = line.substring(0, cIdx);
             const trimmed = line.trim();
 
-            const importMatch = trimmed.match(/^import\s+["']([^"']+)["']/i);
+            const importMatch = trimmed.match(/^import\s+["']([^"']*)["']/i);
             if (importMatch) {
-                const rawImport = importMatch[1];
-                const resolvedTarget = resolveImportPath(rawImport, currPath);
+                const rawImport = importMatch[1].trim();
 
+                if (!rawImport) {
+                    const srcFile = getSrcFile(currPath);
+                    let errMsg = "";
+                    if (importChain.length > 1) {
+                        const chainStr = formatChainTrace(importChain, "(empty)");
+                        errMsg = `Import error\n\n${chainStr}\n\nSource file: ${srcFile}\nLine: ${lineNum}\n\nInvalid import: empty module name`;
+                    } else {
+                        errMsg = `Import error\n\nFile: ${srcFile}\nLine: ${lineNum}\nImport: ""\n\nInvalid import: empty module name`;
+                    }
+                    return { success: false, error: errMsg };
+                }
+
+                const resolvedTarget = resolveImportPath(rawImport, currPath);
                 importGraph.addImportDependency(currPath, resolvedTarget);
 
                 if (!fileTexts.has(resolvedTarget)) {
                     try {
-                        const Response = await fileResolver(resolvedTarget);
-                        if (Response.INFO === "OK") {
+                        const Response = await fileResolver(rawImport);
+                        if (Response && Response.INFO === "OK") {
                             fileTexts.set(resolvedTarget, Response.DATA);
-                            await collectImports(resolvedTarget, Response.DATA);
+                            const subRes = await collectImports(resolvedTarget, Response.DATA, [...importChain, rawImport]);
+                            if (subRes.success === false) {
+                                return subRes;
+                            }
                         } else {
-                            return {
-                                success: false,
-                                error: Response.DATA
-                            };
+                            const srcFile = getSrcFile(currPath);
+                            const serverPath = (Response && Response.PATH) || `lib/${rawImport}.sim`;
+                            const modName = (Response && Response.MODULE) || rawImport;
+
+                            let errMsg = "";
+                            if (importChain.length > 1) {
+                                const chainStr = formatChainTrace(importChain, rawImport);
+                                errMsg = `Import error\n\n${chainStr}\n\nSource file: ${srcFile}\nLine: ${lineNum}\n\nModule not found: ${modName}\nExpected server library:\n${serverPath}`;
+                            } else {
+                                errMsg = `Import error\n\nFile: ${srcFile}\nLine: ${lineNum}\nImport: "${rawImport}"\n\nModule not found: ${modName}\nExpected server library:\n${serverPath}`;
+                            }
+                            return { success: false, error: errMsg };
                         }
                     } catch (e) {
-                        return {
-                            success: "ERROR",
-                            error: e
-                        };
+                        const srcFile = getSrcFile(currPath);
+                        const serverPath = `lib/${rawImport}.sim`;
+                        let errMsg = "";
+                        if (importChain.length > 1) {
+                            const chainStr = formatChainTrace(importChain, rawImport);
+                            errMsg = `Import error\n\n${chainStr}\n\nSource file: ${srcFile}\nLine: ${lineNum}\n\nModule not found: ${rawImport}\nExpected server library:\n${serverPath}`;
+                        } else {
+                            errMsg = `Import error\n\nFile: ${srcFile}\nLine: ${lineNum}\nImport: "${rawImport}"\n\nModule not found: ${rawImport}\nExpected server library:\n${serverPath}`;
+                        }
+                        return { success: false, error: errMsg };
                     }
                 }
             }

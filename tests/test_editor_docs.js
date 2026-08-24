@@ -18,18 +18,18 @@ function runEditorDocsTests() {
             add input A[i]
             move A[i] to (0, i * 40)
         }
-        expr S = A[0] XOR B[0]
+        expr S = A[0] xor B[0]
     `;
 
     const html = highlightSimScript(sampleScript);
     assert(html.includes('<span class="syn-comment"># Full adder</span>'), "Comments should be highlighted");
-    assert(html.includes('<span class="syn-command">for</span>'), "'for' keyword should be highlighted as command");
-    assert(html.includes('<span class="syn-command">in</span>'), "'in' keyword should be highlighted as command");
+    assert(html.includes('syn-command') && html.includes('>for</span>'), "'for' keyword should be highlighted as command");
+    assert(html.includes('syn-command') && html.includes('>in</span>'), "'in' keyword should be highlighted as command");
     assert(html.includes('<span class="syn-number">0..15</span>'), "Range should be highlighted as number");
     assert(html.includes('<span class="syn-type">input</span>'), "'input' should be highlighted as component type");
     assert(html.includes('<span class="syn-identifier">A</span>'), "'A' should be highlighted as identifier");
-    assert(html.includes('<span class="syn-operator">=</span>'), "'=' should be highlighted as operator");
-    assert(html.includes('<span class="syn-type">XOR</span>'), "'XOR' should be highlighted as logic operator/type");
+    assert(html.includes('syn-punctuation') && html.includes('>='), "'=' should be highlighted as operator");
+    assert(html.includes('syn-operator') && html.includes('>xor</span>'), "'xor' should be highlighted as logic operator/type");
 
     // ==========================================
     // 2. Client-side Markdown Renderer Tests

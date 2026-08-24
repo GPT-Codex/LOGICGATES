@@ -5,7 +5,7 @@ import { HistoryManager } from "../frontend/js/canvas/interactions.js";
 import { CommandEngine } from "../frontend/js/simulation/command_engine.js";
 import { parseBooleanExpression } from "../frontend/js/simulation/expr_parser.js";
 
-function runTests() {
+async function runTests() {
     console.log("Running Boolean Expression Synthesis unit tests...");
 
     // Test 1: Parser & Operator Precedence
@@ -127,7 +127,7 @@ expr S = (A XOR B) XOR Cin
 expr Cout = (A AND B) OR (A AND Cin) OR (B AND Cin)
 `;
 
-        const res = commandEngine.executeScript(scriptText);
+        const res = await commandEngine.executeScript(scriptText);
         assert(res.success, `Script failed: ${res.error}`);
 
         assert(circuit.components.has("A"), "Input A should exist");
@@ -141,7 +141,7 @@ expr Cout = (A AND B) OR (A AND Cin) OR (B AND Cin)
 expr Y = A AND B
 expr Z = A AND (B OR
 `;
-        const badRes = commandEngine.executeScript(badScript);
+        const badRes = await commandEngine.executeScript(badScript);
         assert(!badRes.success, "Bad script should fail on syntax error");
         assert.strictEqual(badRes.line, 3, "Failure line should be 3");
     }
@@ -149,4 +149,4 @@ expr Z = A AND (B OR
     console.log("Boolean Expression Synthesis unit tests passed successfully!");
 }
 
-runTests();
+await runTests();

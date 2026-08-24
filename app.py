@@ -177,14 +177,22 @@ def save_library():
 
 @app.route("/api/import", methods=["POST"])
 def parse_import():
-    file = request.get_json()['file']
+    payload = request.get_json() or {}
+    file = payload.get('file', '')
 
+    lib_path = f'lib/{file}.sim'
     try:
-        with open(f'lib/{file}.sim', 'r') as f:
+        with open(lib_path, 'r', encoding="utf-8") as f:
             content = f.readlines()
         return jsonify({"INFO": "OK", "DATA": '\n'.join(content)})
     except FileNotFoundError:
-        return jsonify({"INFO": "ERROR", "DATA": f"{file}: Module not found!"})
+        return jsonify({
+            "INFO": "ERROR",
+            "MODULE": file,
+            "PATH": lib_path,
+            "ERROR": "Module not found",
+            "DATA": f"{file}: Module not found!"
+        })
     
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 80))
