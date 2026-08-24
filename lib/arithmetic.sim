@@ -1,0 +1,26 @@
+
+import "logic"
+
+module RCA(width) {
+    input A[0..width-1]
+    input B[0..width-1]
+    input Cin
+    output S[0..width-1]
+    output Cout
+
+    add FADDER FA[0]
+    connect A[0] -> FA[0].A
+    connect B[0] -> FA[0].B
+    connect Cin -> FA[0].Cin
+    connect FA[0].S -> S[0]
+
+    for i in 1..width-1 {
+        add FADDER FA[i]
+        connect A[i] -> FA[i].A
+        connect B[i] -> FA[i].B
+        connect FA[i - 1].Cout -> FA[i].Cin
+        connect FA[i].S -> S[i]
+    }
+
+    connect FA[width - 1].Cout -> Cout
+}
