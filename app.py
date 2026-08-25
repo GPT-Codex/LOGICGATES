@@ -175,8 +175,21 @@ def save_library():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route("/api/import", methods=["POST"])
+@app.route("/api/import", methods=["GET", "POST"])
 def parse_import():
+    if request.method == "GET":
+        try:
+            lib_dir = 'lib'
+            libraries = []
+            if os.path.exists(lib_dir):
+                for f in os.listdir(lib_dir):
+                    if f.endswith(".sim") and os.path.isfile(os.path.join(lib_dir, f)):
+                        libraries.append(f[:-4])
+            libraries.sort()
+            return jsonify({"INFO": "OK", "LIBRARIES": libraries})
+        except Exception as e:
+            return jsonify({"INFO": "ERROR", "ERROR": str(e)}), 500
+
     payload = request.get_json() or {}
     file = payload.get('file', '')
 

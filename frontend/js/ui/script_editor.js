@@ -1,3 +1,5 @@
+import { getCompletions, fetchServerLibraries } from "./autocomplete.js";
+
 /**
  * .sim Script Editor — presentation layer only.
  *
@@ -22,8 +24,8 @@
 
 const COMMANDS = new Set([
   "add", "remove", "move", "connect", "disconnect", "set", "get", "list",
-  "show", "expr", "bus", "net", "for", "in", "module", "const", "import",
-  "as"
+  "show", "trace", "expand", "detach", "undo", "redo", "expr", "bus", "net",
+  "for", "in", "module", "const", "import", "as"
 ]);
 
 const COMP_TYPES = new Set([
@@ -66,6 +68,11 @@ const custom_colours = {
     "get": colors.yellow,
     "list": colors.yellow,
     "show": colors.yellow,
+    "trace": colors.yellow,
+    "expand": colors.yellow,
+    "detach": colors.yellow,
+    "undo": colors.yellow,
+    "redo": colors.yellow,
     "expr": colors.purple,
     "bus": colors.yellow,
     "net": colors.yellow,
@@ -271,9 +278,14 @@ export class ScriptEditor {
     this.activeLine = 1;
     this.wrap = false;
 
+    this.selectedIndex = 0;
+    this.completions = [];
+    this.activePrefix = "";
+
     this._buildDom();
     this._bindEvents();
     this.update();
+    fetchServerLibraries();
   }
 
   /* --------------------------- DOM --------------------------- */
@@ -323,6 +335,7 @@ export class ScriptEditor {
             <textarea class="sim-editor-textarea" data-role="textarea" spellcheck="false" autocomplete="off"
               autocapitalize="off" autocorrect="off" wrap="off"
               placeholder="# Enter .sim script code…&#10;add and G1&#10;connect A -> G1.in0"></textarea>
+            <div class="sim-autocomplete-popup" data-role="popup" hidden></div>
           </div>
         </div>
       </div>
@@ -339,6 +352,7 @@ export class ScriptEditor {
     this.caretStatEl = q("caret");
     this.diagStatEl = q("diagstat");
     this.hintsEl = q("hints");
+    this.popupEl = q("popup");
 
     // Legacy ids kept so any existing querySelector("#editor-textarea") still works.
     if (!document.getElementById("editor-textarea")) {
@@ -363,6 +377,7 @@ export class ScriptEditor {
       this.errorLine = null;
       this.diagnostics = [];
       this.update();
+      this._triggerAutocomplete();
       if (typeof this.options.onChange === "function") {
         this.options.onChange(ta.value);
       }
@@ -385,9 +400,25 @@ export class ScriptEditor {
     }
 
     document.addEventListener("click", (e) => {
-      if (!this.hintsEl || this.hintsEl.hidden) return;
-      if (!e.target.closest(".sim-editor-hint-wrap")) this.hintsEl.hidden = true;
+      if (this.hintsEl && !this.hintsEl.hidden && !e.target.closest(".sim-editor-hint-wrap")) {
+        this.hintsEl.hidden = true;
+      }
+      if (this.popupEl && !this.popupEl.hidden && !e.target.closest(".sim-editor-host")) {
+        this.dismissAutocomplete();
+      }
     });
+
+    if (this.popupEl) {
+      this.popupEl.addEventListener("click", (e) => {
+        const itemEl = e.target.closest(".sim-auto-item");
+        if (itemEl && itemEl.dataset.idx) {
+          const idx = parseInt(itemEl.dataset.idx, 10);
+          if (this.completions[idx]) {
+            this.acceptAutocomplete(this.completions[idx]);
+          }
+        }
+      });
+    }
 
     // Gutter click jumps to that line.
     this.gutterEl.addEventListener("click", (e) => {
@@ -454,6 +485,41 @@ export class ScriptEditor {
     const val = ta.value;
     const start = ta.selectionStart;
     const end = ta.selectionEnd;
+
+    // Manual autocomplete trigger
+    if ((e.ctrlKey || e.metaKey) && e.key === " ") {
+      e.preventDefault();
+      this._triggerAutocomplete(true);
+      return;
+    }
+
+    // Popup Navigation
+    if (this.popupEl && !this.popupEl.hidden && this.completions.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        this.selectedIndex = (this.selectedIndex + 1) % this.completions.length;
+        this._renderPopupList();
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        this.selectedIndex = (this.selectedIndex - 1 + this.completions.length) % this.completions.length;
+        this._renderPopupList();
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        if (this.completions[this.selectedIndex]) {
+          this.acceptAutocomplete(this.completions[this.selectedIndex]);
+        }
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        this.dismissAutocomplete();
+        return;
+      }
+    }
 
     // Run
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -611,6 +677,127 @@ export class ScriptEditor {
       html += `<div class="${cls}"${title}></div>`;
     }
     this.linesEl.innerHTML = html;
+  }
+
+  _triggerAutocomplete(isManual = false) {
+    if (!this.popupEl) return;
+
+    const ta = this.textareaEl;
+    const offset = ta.selectionStart;
+    const fullText = ta.value;
+
+    const envContext = {
+      circuit: this.options.circuit || null,
+      registry: this.options.registry || null,
+      fileImportAliases: this.options.fileImportAliases || null,
+      serverLibraries: this.options.serverLibraries || null
+    };
+
+    const res = getCompletions(fullText, offset, envContext);
+    const suggestions = res.suggestions || [];
+
+    // Automatic trigger conditions: require at least 1 typed character or explicit manual call
+    if (suggestions.length === 0 || (!isManual && !res.replacePrefix && res.contextType !== "import_path" && res.contextType !== "component_type")) {
+      this.dismissAutocomplete();
+      return;
+    }
+
+    this.completions = suggestions;
+    this.activePrefix = res.replacePrefix || "";
+    this.selectedIndex = 0;
+
+    this._renderPopupList();
+    this._positionPopup();
+  }
+
+  _positionPopup() {
+    if (!this.popupEl) return;
+    const ta = this.textareaEl;
+    const upto = ta.value.substring(0, ta.selectionStart);
+    const lines = upto.split("\n");
+    const lineNo = lines.length;
+    const colNo = lines[lines.length - 1].length;
+
+    const lh = this._lineHeight();
+    const top = (lineNo - 1) * lh - ta.scrollTop + 24;
+    const left = Math.min(colNo * 7.5 + 40 - ta.scrollLeft, this.container.clientWidth - 260);
+
+    this.popupEl.style.top = `${Math.max(20, top)}px`;
+    this.popupEl.style.left = `${Math.max(40, left)}px`;
+    this.popupEl.hidden = false;
+  }
+
+  _renderPopupList() {
+    if (!this.popupEl) return;
+    if (this.completions.length === 0) {
+      this.popupEl.hidden = true;
+      return;
+    }
+
+    let html = "";
+    this.completions.slice(0, 10).forEach((item, idx) => {
+      const isSel = idx === this.selectedIndex;
+      const typeBadge = item.type ? `<span class="sim-auto-badge is-${item.type}">${item.type}</span>` : "";
+      const detailStr = item.detail ? `<span class="sim-auto-detail">${escapeHtml(item.detail)}</span>` : "";
+      const descStr = item.desc ? `<span class="sim-auto-desc">${escapeHtml(item.desc)}</span>` : "";
+
+      html += `
+        <div class="sim-auto-item ${isSel ? "is-selected" : ""}" data-idx="${idx}">
+          <div class="sim-auto-main">
+            <span class="sim-auto-name">${escapeHtml(item.name)}</span>
+            ${detailStr}
+            ${typeBadge}
+          </div>
+          ${descStr ? `<div class="sim-auto-sub">${descStr}</div>` : ""}
+        </div>
+      `;
+    });
+
+    this.popupEl.innerHTML = html;
+    this.popupEl.hidden = false;
+
+    // Scroll selected item into view inside popup container
+    const selectedEl = this.popupEl.querySelector(".sim-auto-item.is-selected");
+    if (selectedEl) {
+      selectedEl.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  acceptAutocomplete(item) {
+    if (!item) return;
+
+    const ta = this.textareaEl;
+    const val = ta.value;
+    const start = ta.selectionStart;
+
+    // Replace typed prefix with selected item name
+    const prefixLen = this.activePrefix ? this.activePrefix.length : 0;
+    const insertVal = item.name;
+
+    const before = val.substring(0, start - prefixLen);
+    const after = val.substring(start);
+
+    ta.value = before + insertVal + after;
+    const newPos = before.length + insertVal.length;
+    ta.selectionStart = ta.selectionEnd = newPos;
+
+    this.dismissAutocomplete();
+    this.update();
+    ta.focus();
+
+    if (typeof this.options.onChange === "function") {
+      this.options.onChange(ta.value);
+    }
+  }
+
+  dismissAutocomplete() {
+    this.completions = [];
+    this.selectedIndex = 0;
+    this.activePrefix = "";
+    if (this.popupEl) {
+      this.popupEl.hidden = true;
+      this.popupEl.innerHTML = "";
+    }
   }
 
   _renderDiagStat() {

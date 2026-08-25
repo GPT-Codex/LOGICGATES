@@ -360,6 +360,31 @@ expr S = A XOR B
 
 ---
 
+## 4.2 Script Editor Autocomplete
+
+The `.sim` script editor features a context-sensitive, VS Code-style autocomplete system that provides instant suggestions as you type or upon manual invocation (`Tab`, `Ctrl+Space`, `Cmd+Space`).
+
+### Keyboard Navigation & Shortcuts
+- `Ctrl+Space` / `Cmd+Space`: Trigger autocomplete suggestions manually.
+- `ArrowUp` / `ArrowDown`: Navigate through suggestion items.
+- `Enter` / `Tab`: Accept and insert the selected completion.
+- `Escape`: Dismiss the autocomplete popup.
+
+### Contextual Suggestions
+- **Line Start:** Commands (`add`, `move`, `connect`, `set`, `remove`, `show`, `trace`, `expand`, `detach`, `list`, `net`, `const`, `import`, `bus`, `expr`, `for`, `module`, `undo`, `redo`), in-scope loop variables, and constants.
+- **After `add`:** Built-in gate types (`and`, `or`, `nand`, `nor`, `xor`, `not`, `input`, `output`, `clock`, `button`, `npn`, `pnp`, `led`, `7-segment display`, `10-segment display`), custom/scripted modules (`FullAdder`, `RCA`), and import alias prefixes (`logic.`, `math.`).
+- **After `import "`:** Available server library `.sim` files (`logic`, `arithmetic`).
+- **After `import "module" `:** Keyword `as`.
+- **After Alias (`math.`):** Exported module definitions and constants in that library namespace.
+- **After `move`, `remove`, `show`, `trace`, `expand`, `detach`:** Instance names and bus names from the active circuit graph.
+- **After `connect` / `connect A ->`:** Component names and signal sources/destinations.
+- **After `connect COMP.`:** Exposed pins and ports for component `COMP` (including vector indices).
+- **After `set COMP.`:** Properties supported by component `COMP` (`label`, `freq`, `buttonMode`, `holdDuration`, `ledColor`, `rgbaValue`, `rotation`, `flipX`, `flipY`).
+- **After `set COMP.PROPERTY `:** Enumerated property values (`Hz`, `kHz`, `MHz`, `GHz`, `press`, `hold`, `Red`, `Green`, `Blue`, `RGBA`, `true`, `false`).
+- **Module Parameters (`add RCA(`):** Parameter names (`width=`), constants, and loop variables.
+
+---
+
 ## 4.1 Natural Numeric Pin Ordering
 
 Module input/output ports and vector buses containing numeric indices (such as `B[0..15]`, `A[0]..A[100]`) are sorted in natural numerical order for visual layout and display:
