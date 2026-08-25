@@ -22,7 +22,8 @@
 
 const COMMANDS = new Set([
   "add", "remove", "move", "connect", "disconnect", "set", "get", "list",
-  "show", "expr", "bus", "net", "for", "in", "module", "const", "import"
+  "show", "expr", "bus", "net", "for", "in", "module", "const", "import",
+  "as"
 ]);
 
 const COMP_TYPES = new Set([
@@ -72,7 +73,8 @@ const custom_colours = {
     "in": colors.purple,
     "module": colors.green,
     "const": colors.deepBlue,
-    "import": colors.purple
+    "import": colors.purple,
+    "as": colors.purple
 };
 
 /* ------------------------------------------------------------------ *
