@@ -61,6 +61,8 @@ export function serializeCircuit(circuit, registry) {
         } else if (comp.type === "Button") {
             serialized.buttonMode = comp.buttonMode || "press";
             serialized.holdDuration = comp.holdDuration || 1000;
+        } else if (comp.type === "DFF" || comp.type === "dff") {
+            serialized.storedState = comp.storedState !== undefined ? comp.storedState : 0;
         } else if (comp.type === "UserModule" && comp.definition) {
             serialized.definitionId = comp.definition.id;
             serialized.pinPositions = comp.pins().map(p => ({
@@ -221,6 +223,12 @@ export function deserializeCircuit(data, circuit, registry) {
         } else if (comp.type === "Button") {
             comp.buttonMode = compData.buttonMode || "press";
             comp.holdDuration = compData.holdDuration || 1000;
+        } else if (comp.type === "DFF" || comp.type === "dff") {
+            if (compData.storedState !== undefined) {
+                comp.storedState = compData.storedState;
+                comp.outputs[0].value = comp.storedState;
+                comp.outputs[1].value = comp.storedState === 1 ? 0 : 1;
+            }
         } else if (comp.type === "UserModule" && compData.pinPositions) {
             compData.pinPositions.forEach(pos => {
                 comp.repositionPin(pos.id, pos.side, pos.offset);

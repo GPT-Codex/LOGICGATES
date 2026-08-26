@@ -328,6 +328,7 @@ Supported built-in component types:
 - `clock` (Pulse Clock Generator)
 - `constant high` / `constant low`
 - `button` (Push Button Switch)
+- `dff` / `DFF` (Edge-Triggered D Flip-Flop)
 - `and` / `nand`
 - `or` / `nor`
 - `xor` / `xnor`
@@ -653,4 +654,57 @@ move BUF0 to (300, 200)
 
 connect IN BUF0.A
 connect BUF0.O OUT
+```
+
+---
+
+## 10. Clocked Sequential Logic & D Flip-Flops (`dff`)
+
+The simulator provides first-class, edge-triggered **D Flip-Flops** (`dff`) for modeling sequential state, registers, counters, and state machines.
+
+### D Flip-Flop Pins
+- `D` (Input): Data input signal
+- `CLK` (Input): Clock trigger signal
+- `Q` (Output): Stored output signal
+- `/Q` (Output): Inverted stored output signal
+
+### Clock Semantics & Edge Triggering
+- **Positive Edge Triggered:** The flip-flop samples the value of `D` on the 0 → 1 transition (rising edge) of `CLK`.
+- **Stored State:** Between active clock edges, `Q` and `/Q` remain stable and hold their stored state regardless of changes on `D`.
+- **Initial State:** Upon instantiation or reset, the flip-flop initializes deterministically to `Q = 0` and `/Q = 1`.
+
+### Sequential State Feedback
+Unlike combinational logic where self-references produce errors, sequential logic feedback bounded by an edge-triggered `dff` is explicitly valid. For example, connecting `/Q` to `D` constructs a divide-by-2 toggle flip-flop:
+
+```sim
+add dff FF0
+add clock CLK
+add output DIV2
+
+connect CLK.CLK -> FF0.CLK
+connect FF0./Q -> FF0.D
+connect FF0.Q -> DIV2.D
+```
+
+### Scripted 8-Bit Register Module Example (`REG8`)
+D Flip-Flops can be composed inside custom and parameterized subcircuit modules using `for` loops:
+
+```sim
+# 8-Bit Edge-Triggered Register Module
+module REG8 {
+    input D[0..7]
+    input CLK
+    output Q[0..7]
+
+    add dff FF[0..7]
+
+    for i in 0..7 {
+        connect D[i] -> FF[i].D
+        connect CLK -> FF[i].CLK
+        connect FF[i].Q -> Q[i]
+    }
+}
+
+add REG8 R8
+move R8 to (300, 200)
 ```

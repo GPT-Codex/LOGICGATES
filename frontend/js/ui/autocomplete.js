@@ -82,6 +82,70 @@ export async function fetchServerLibraries() {
  * @param {number} currentLineIdx - 0-based index
  * @returns {{ constants: Map<string, number|string>, loopVars: Set<string> }}
  */
+/**
+ * Extract module definitions directly declared in the script source text.
+ * Allows unexecuted or forward-declared modules in the editor to be suggested immediately.
+ * @param {string} fullText
+ * @returns {Array<{ name: string, params: string[], inputs: string[], outputs: string[], type: string, desc: string, detail: string }>}
+ */
+export function extractScriptModules(fullText) {
+    if (!fullText) return [];
+    const modules = [];
+    const seen = new Set();
+
+    const lines = fullText.split(/\r?\n/);
+    let currentMod = null;
+
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        const commentIdx = line.indexOf("#");
+        if (commentIdx !== -1) line = line.substring(0, commentIdx);
+        const trimmed = line.trim();
+
+        const modMatch = trimmed.match(/^module\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*\(([^)]*)\))?/i);
+        if (modMatch) {
+            const name = modMatch[1];
+            const lower = name.toLowerCase();
+            const rawParams = modMatch[2] ? modMatch[2].split(",").map(p => p.trim()).filter(Boolean) : [];
+
+            currentMod = {
+                name,
+                params: rawParams,
+                inputs: [],
+                outputs: [],
+                type: "module",
+                desc: `Script-defined module ${name}${rawParams.length > 0 ? `(${rawParams.join(", ")})` : ""}`,
+                detail: rawParams.length > 0 ? `(${rawParams.join(", ")})` : ""
+            };
+
+            if (!seen.has(lower)) {
+                seen.add(lower);
+                modules.push(currentMod);
+            }
+            continue;
+        }
+
+        if (currentMod) {
+            if (trimmed === "}") {
+                currentMod = null;
+                continue;
+            }
+
+            const inMatch = trimmed.match(/^input\s+([a-zA-Z_][a-zA-Z0-9_]*)/i);
+            if (inMatch) {
+                currentMod.inputs.push(inMatch[1]);
+            }
+
+            const outMatch = trimmed.match(/^output\s+([a-zA-Z_][a-zA-Z0-9_]*)/i);
+            if (outMatch) {
+                currentMod.outputs.push(outMatch[1]);
+            }
+        }
+    }
+
+    return modules;
+}
+
 export function extractScopeMetadata(fullText, currentLineIdx) {
     const lines = fullText.split(/\r?\n/);
     const constants = new Map();
@@ -242,6 +306,14 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
         const mods = [];
         const seen = new Set();
 
+        // 1. Script-defined modules extracted directly from editor source text
+        const scriptMods = extractScriptModules(fullText);
+        for (const sm of scriptMods) {
+            seen.add(sm.name.toLowerCase());
+            mods.push(sm);
+        }
+
+        // 2. Compiled or imported module definitions from registry
         if (registry) {
             for (const def of registry.definitions.values()) {
                 if (!seen.has(def.name.toLowerCase())) {
@@ -251,7 +323,10 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
                         name: def.name,
                         type: "module",
                         desc: def.description || `Module ${def.name}${paramsStr}`,
-                        detail: paramsStr
+                        detail: paramsStr,
+                        params: def.params || [],
+                        inputs: def.inputs || [],
+                        outputs: def.outputs || []
                     });
                 }
             }
@@ -309,26 +384,29 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
     // Helper: collect pins for a component or bus name
     const getComponentPins = (compName) => {
         const pins = [];
-        if (!circuit) return pins;
-
-        if (circuit.buses && circuit.buses.has(compName)) {
-            const bus = circuit.buses.get(compName);
-            for (const member of bus.members) {
-                pins.push({ name: member, type: "pin", desc: `Bus bit signal` });
+        if (circuit) {
+            if (circuit.buses && circuit.buses.has(compName)) {
+                const bus = circuit.buses.get(compName);
+                for (const member of bus.members) {
+                    pins.push({ name: member, type: "pin", desc: `Bus bit signal` });
+                }
+                return pins;
             }
-            return pins;
+
+            const comp = circuit.components.get(compName);
+            if (comp) {
+                for (const pin of comp.pins()) {
+                    pins.push({
+                        name: pin.name,
+                        type: "pin",
+                        desc: `${pin.type} pin (value=${pin.value})`
+                    });
+                }
+                return pins;
+            }
         }
 
-        const comp = circuit.components.get(compName);
-        if (comp) {
-            for (const pin of comp.pins()) {
-                pins.push({
-                    name: pin.name,
-                    type: "pin",
-                    desc: `${pin.type} pin (value=${pin.value})`
-                });
-            }
-        } else if (registry) {
+        if (registry) {
             // Check if compName matches a module definition name
             for (const def of registry.definitions.values()) {
                 if (def.name.toLowerCase() === compName.toLowerCase()) {
@@ -338,8 +416,22 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
                     for (const out of def.outputs) {
                         pins.push({ name: out, type: "pin", desc: "output port" });
                     }
-                    break;
+                    return pins;
                 }
+            }
+        }
+
+        // Also check script-extracted modules from editor source text
+        const scriptMods = extractScriptModules(fullText);
+        for (const sm of scriptMods) {
+            if (sm.name.toLowerCase() === compName.toLowerCase()) {
+                for (const inp of sm.inputs) {
+                    pins.push({ name: inp, type: "pin", desc: "input port" });
+                }
+                for (const out of sm.outputs) {
+                    pins.push({ name: out, type: "pin", desc: "output port" });
+                }
+                break;
             }
         }
         return pins;
@@ -475,6 +567,20 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
                             name: `${p}=`,
                             type: "parameter",
                             desc: `Parameter '${p}' for ${def.name}`
+                        });
+                    }
+                }
+            }
+        }
+        const scriptMods = extractScriptModules(fullText);
+        for (const sm of scriptMods) {
+            if (sm.name.toLowerCase() === modName.toLowerCase() && sm.params) {
+                for (const p of sm.params) {
+                    if (!candidates.some(c => c.name === `${p}=`)) {
+                        candidates.push({
+                            name: `${p}=`,
+                            type: "parameter",
+                            desc: `Parameter '${p}' for ${sm.name}`
                         });
                     }
                 }

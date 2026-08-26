@@ -30,7 +30,7 @@ const COMMANDS = new Set([
 
 const COMP_TYPES = new Set([
   "input", "output", "clock", "and", "or", "xor", "not", "nand", "nor",
-  "xnor", "buffer", "button", "npn", "pnp", "led",
+  "xnor", "buffer", "button", "npn", "pnp", "led", "dff",
 ]);
 
 /** Multi-word component types, matched before single words. */

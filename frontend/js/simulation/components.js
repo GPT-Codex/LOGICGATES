@@ -1250,6 +1250,113 @@ export class PNPTransistorGate extends Component {
 /**
  * Mapping of component types to their constructor classes.
  */
+export class DFFGate extends Component {
+    constructor(id, x, y) {
+        super(id, "DFF", x, y);
+        this.width = 60;
+        this.height = 50;
+
+        // Inputs: D, CLK
+        const inD = this.addInput(`${id}_inD`, "D");
+        inD.relX = -30;
+        inD.relY = -12;
+
+        const inCLK = this.addInput(`${id}_inCLK`, "CLK");
+        inCLK.relX = -30;
+        inCLK.relY = 12;
+
+        // Outputs: Q, /Q
+        const outQ = this.addOutput(`${id}_outQ`, "Q");
+        outQ.relX = 30;
+        outQ.relY = -12;
+
+        const outQBar = this.addOutput(`${id}_outQBar`, "/Q");
+        outQBar.relX = 30;
+        outQBar.relY = 12;
+
+        // Internal sequential state
+        this.storedState = 0; // Q initial state = 0
+        this.prevClk = 0;
+
+        // Evaluate initial outputs
+        this.outputs[0].value = 0; // Q
+        this.outputs[1].value = 1; // /Q
+    }
+
+    evaluate() {
+        const currentD = this.inputs[0].value === 1 ? 1 : 0;
+        const currentClk = this.inputs[1].value === 1 ? 1 : 0;
+
+        // Positive edge trigger detection: 0 -> 1 on CLK
+        if (this.prevClk === 0 && currentClk === 1) {
+            this.storedState = currentD;
+        }
+        this.prevClk = currentClk;
+
+        this.outputs[0].value = this.storedState;
+        this.outputs[1].value = this.storedState === 1 ? 0 : 1;
+    }
+
+    draw(ctx, isSelected) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
+
+        if (isSelected) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#3498db";
+            ctx.strokeStyle = "#3498db";
+            ctx.lineWidth = 2.5;
+        } else {
+            ctx.strokeStyle = "#4e4e4e";
+            ctx.lineWidth = 1.5;
+        }
+
+        ctx.fillStyle = "#1e293b";
+        ctx.beginPath();
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        // Clock pin triangle symbol on CLK input
+        ctx.strokeStyle = "#3498db";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(-this.width / 2, 6);
+        ctx.lineTo(-this.width / 2 + 8, 12);
+        ctx.lineTo(-this.width / 2, 18);
+        ctx.stroke();
+        ctx.restore();
+
+        // Pin labels inside box
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "bold 10px monospace";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText("D", -this.width / 2 + 6, -12);
+        ctx.fillText("CLK", -this.width / 2 + 10, 12);
+
+        ctx.textAlign = "right";
+        ctx.fillText("Q", this.width / 2 - 6, -12);
+        ctx.fillText("/Q", this.width / 2 - 6, 12);
+
+        // Center Component Title
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(this.label || "DFF", 0, 0);
+
+        ctx.restore();
+
+        this.drawPins(ctx);
+    }
+}
+
+/**
+ * Mapping of component types to their constructor classes.
+ */
 export const COMPONENT_REGISTRY = {
     "Input": InputGate,
     "Output": OutputGate,
@@ -1269,7 +1376,9 @@ export const COMPONENT_REGISTRY = {
     "10-Segment Display": TenSegmentGate,
     "Button": ButtonGate,
     "NPN Transistor": NPNTransistorGate,
-    "PNP Transistor": PNPTransistorGate
+    "PNP Transistor": PNPTransistorGate,
+    "DFF": DFFGate,
+    "dff": DFFGate
 };
 
 /**

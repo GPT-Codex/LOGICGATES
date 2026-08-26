@@ -159,6 +159,25 @@ function runAutocompleteTests() {
         console.log("  ✓ Autocomplete tolerance with incomplete syntax passed");
     }
 
+    // 12. Script-defined unexecuted module completion & port completion
+    {
+        const script = `module FADDER {\n input A\n input B\n input Cin\n output S\n output Cout\n}\nadd FA`;
+        const resAdd = getCompletions(script, script.length, {});
+        assert.ok(resAdd.suggestions.some(s => s.name === "FADDER"));
+
+        const scriptParam = `module RCA(width) {\n input A[0..width-1]\n output S[0..width-1]\n}\nadd RCA(`;
+        const resParam = getCompletions(scriptParam, scriptParam.length, {});
+        assert.ok(resParam.suggestions.some(s => s.name === "width="));
+
+        const scriptConnect = `module FADDER {\n input A\n input B\n input Cin\n output S\n output Cout\n}\nconnect FADDER.`;
+        const resPin = getCompletions(scriptConnect, scriptConnect.length, {});
+        assert.ok(resPin.suggestions.some(s => s.name === "A"));
+        assert.ok(resPin.suggestions.some(s => s.name === "Cin"));
+        assert.ok(resPin.suggestions.some(s => s.name === "S"));
+        assert.ok(resPin.suggestions.some(s => s.name === "Cout"));
+        console.log("  ✓ Script-defined module & port completions passed");
+    }
+
     console.log("All Autocomplete unit tests passed successfully!");
 }
 
