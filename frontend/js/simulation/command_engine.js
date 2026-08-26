@@ -387,6 +387,16 @@ export class CommandEngine {
             comp = new UserModule(name, customDef, 100, 100, this.registry);
         } else {
             comp = createComponent(actualType, name, 100, 100);
+            if (paramArgsStr && typeof comp.setWidth === "function") {
+                let wVal = parseInt(paramArgsStr);
+                if (isNaN(wVal)) {
+                    const match = paramArgsStr.match(/(?:width|w)\s*=\s*(\d+)/i);
+                    if (match) wVal = parseInt(match[1]);
+                }
+                if (!isNaN(wVal) && wVal > 0) {
+                    comp.setWidth(wVal);
+                }
+            }
         }
         this.circuit.addComponent(comp);
 

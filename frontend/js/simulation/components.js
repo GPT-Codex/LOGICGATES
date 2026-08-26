@@ -1357,6 +1357,247 @@ export class DFFGate extends Component {
 /**
  * Mapping of component types to their constructor classes.
  */
+export class CounterGate extends Component {
+    constructor(id, x, y, widthBits = 4) {
+        super(id, "Counter", x, y);
+        this.widthBits = Math.max(1, Math.min(64, widthBits));
+        this.count = 0;
+        this.prevClk = 0;
+
+        this.rebuildCounterPins();
+    }
+
+    rebuildCounterPins() {
+        this.inputs = [];
+        this.outputs = [];
+
+        const totalPinRows = Math.max(this.widthBits, 2);
+        this.width = 100;
+        this.height = Math.max(60, totalPinRows * 20 + 30);
+
+        // Inputs: CLK, EN
+        const clkPin = this.addInput(`${this.id}_in_CLK`, "CLK");
+        clkPin.relX = -this.width / 2;
+        clkPin.relY = -this.height / 2 + 20;
+
+        const enPin = this.addInput(`${this.id}_in_EN`, "EN");
+        enPin.relX = -this.width / 2;
+        enPin.relY = -this.height / 2 + 40;
+        enPin.value = 1; // Default EN HIGH when disconnected
+
+        // Outputs: Q[0..N-1]
+        for (let i = 0; i < this.widthBits; i++) {
+            const pinName = this.widthBits === 1 ? "Q" : `Q[${i}]`;
+            const pin = this.addOutput(`${this.id}_out_Q${i}`, pinName);
+            pin.relX = this.width / 2;
+            pin.relY = -this.height / 2 + 20 + i * 20;
+            pin.value = (this.count >> i) & 1;
+        }
+    }
+
+    setWidth(newWidth) {
+        const w = Math.max(1, Math.min(64, parseInt(newWidth) || 4));
+        if (w !== this.widthBits) {
+            this.widthBits = w;
+            const maxVal = Math.pow(2, this.widthBits);
+            this.count = this.count % maxVal;
+            this.rebuildCounterPins();
+            this.evaluate();
+        }
+    }
+
+    evaluate() {
+        const clkPin = this.inputs[0];
+        const enPin = this.inputs[1];
+
+        const currentClk = clkPin ? (clkPin.value === 1 ? 1 : 0) : 0;
+        // EN defaults to HIGH (1) if un-driven / not connected
+        const enVal = enPin ? (enPin.value !== undefined ? enPin.value : 1) : 1;
+
+        // Rising clock edge (0 -> 1)
+        if (this.prevClk === 0 && currentClk === 1) {
+            if (enVal === 1) {
+                const maxCount = Math.pow(2, this.widthBits);
+                this.count = (this.count + 1) % maxCount;
+            }
+        }
+        this.prevClk = currentClk;
+
+        for (let i = 0; i < this.widthBits; i++) {
+            if (this.outputs[i]) {
+                this.outputs[i].value = (this.count >> i) & 1;
+            }
+        }
+    }
+
+    draw(ctx, isSelected) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
+
+        if (isSelected) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#3498db";
+            ctx.strokeStyle = "#3498db";
+            ctx.lineWidth = 2.5;
+        } else {
+            ctx.strokeStyle = "#4e4e4e";
+            ctx.lineWidth = 1.5;
+        }
+
+        ctx.fillStyle = "#1e293b";
+        ctx.beginPath();
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        // Clock pin triangle symbol on CLK (-width/2, -height/2 + 20)
+        const clkY = -this.height / 2 + 20;
+        ctx.strokeStyle = "#3498db";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(-this.width / 2, clkY - 5);
+        ctx.lineTo(-this.width / 2 + 8, clkY);
+        ctx.lineTo(-this.width / 2, clkY + 5);
+        ctx.stroke();
+        ctx.restore();
+
+        // Title
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(this.label || `COUNT(${this.widthBits})`, 0, 0);
+
+        ctx.restore();
+
+        this.drawPins(ctx);
+    }
+}
+
+export class RegisterGate extends Component {
+    constructor(id, x, y, widthBits = 8) {
+        super(id, "Register", x, y);
+        this.widthBits = Math.max(1, Math.min(256, widthBits));
+        this.storedState = new Array(this.widthBits).fill(0);
+        this.prevClk = 0;
+
+        this.rebuildRegisterPins();
+    }
+
+    rebuildRegisterPins() {
+        this.inputs = [];
+        this.outputs = [];
+
+        const totalPinRows = Math.max(this.widthBits, 2);
+        this.width = 100;
+        this.height = Math.max(60, totalPinRows * 20 + 30);
+
+        // Inputs: D[0..N-1], CLK
+        for (let i = 0; i < this.widthBits; i++) {
+            const pinName = this.widthBits === 1 ? "D" : `D[${i}]`;
+            const pin = this.addInput(`${this.id}_in_D${i}`, pinName);
+            pin.relX = -this.width / 2;
+            pin.relY = -this.height / 2 + 20 + i * 20;
+        }
+
+        const clkPin = this.addInput(`${this.id}_in_CLK`, "CLK");
+        clkPin.relX = -this.width / 2;
+        clkPin.relY = this.height / 2 - 15;
+
+        // Outputs: Q[0..N-1]
+        for (let i = 0; i < this.widthBits; i++) {
+            const pinName = this.widthBits === 1 ? "Q" : `Q[${i}]`;
+            const pin = this.addOutput(`${this.id}_out_Q${i}`, pinName);
+            pin.relX = this.width / 2;
+            pin.relY = -this.height / 2 + 20 + i * 20;
+            pin.value = this.storedState[i] || 0;
+        }
+    }
+
+    setWidth(newWidth) {
+        const w = Math.max(1, Math.min(256, parseInt(newWidth) || 8));
+        if (w !== this.widthBits) {
+            this.widthBits = w;
+            const oldState = this.storedState || [];
+            this.storedState = new Array(this.widthBits).fill(0);
+            for (let i = 0; i < Math.min(oldState.length, this.widthBits); i++) {
+                this.storedState[i] = oldState[i];
+            }
+            this.rebuildRegisterPins();
+            this.evaluate();
+        }
+    }
+
+    evaluate() {
+        // CLK is the last input pin
+        const clkPin = this.inputs[this.inputs.length - 1];
+        const currentClk = clkPin ? (clkPin.value === 1 ? 1 : 0) : 0;
+
+        // Rising clock edge (0 -> 1)
+        if (this.prevClk === 0 && currentClk === 1) {
+            for (let i = 0; i < this.widthBits; i++) {
+                this.storedState[i] = this.inputs[i].value === 1 ? 1 : 0;
+            }
+        }
+        this.prevClk = currentClk;
+
+        for (let i = 0; i < this.widthBits; i++) {
+            if (this.outputs[i]) {
+                this.outputs[i].value = this.storedState[i] || 0;
+            }
+        }
+    }
+
+    draw(ctx, isSelected) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
+
+        if (isSelected) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#3498db";
+            ctx.strokeStyle = "#3498db";
+            ctx.lineWidth = 2.5;
+        } else {
+            ctx.strokeStyle = "#4e4e4e";
+            ctx.lineWidth = 1.5;
+        }
+
+        ctx.fillStyle = "#1e293b";
+        ctx.beginPath();
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        // Clock pin triangle symbol on CLK
+        const clkY = this.height / 2 - 15;
+        ctx.strokeStyle = "#3498db";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(-this.width / 2, clkY - 5);
+        ctx.lineTo(-this.width / 2 + 8, clkY);
+        ctx.lineTo(-this.width / 2, clkY + 5);
+        ctx.stroke();
+        ctx.restore();
+
+        // Title
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(this.label || `REG(${this.widthBits})`, 0, 0);
+
+        ctx.restore();
+
+        this.drawPins(ctx);
+    }
+}
+
 export const COMPONENT_REGISTRY = {
     "Input": InputGate,
     "Output": OutputGate,
@@ -1378,7 +1619,13 @@ export const COMPONENT_REGISTRY = {
     "NPN Transistor": NPNTransistorGate,
     "PNP Transistor": PNPTransistorGate,
     "DFF": DFFGate,
-    "dff": DFFGate
+    "dff": DFFGate,
+    "Register": RegisterGate,
+    "REGISTER": RegisterGate,
+    "register": RegisterGate,
+    "Counter": CounterGate,
+    "COUNTER": CounterGate,
+    "counter": CounterGate
 };
 
 /**

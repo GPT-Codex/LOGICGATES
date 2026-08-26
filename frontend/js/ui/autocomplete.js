@@ -277,16 +277,20 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
         const types = [];
         const seen = new Set();
 
-        const addType = (name, desc) => {
+        const addType = (name, desc, detail = "") => {
             const lower = name.toLowerCase();
             if (!seen.has(lower)) {
                 seen.add(lower);
-                types.push({ name, type: "component", desc: desc || "Built-in component" });
+                types.push({ name, type: "component", desc: desc || "Built-in component", detail });
             }
         };
 
         for (const [k, v] of Object.entries(COMPONENT_REGISTRY)) {
-            addType(k, "Built-in component");
+            let detail = "";
+            if (k.toLowerCase() === "register" || k.toLowerCase() === "counter") {
+                detail = "(width)";
+            }
+            addType(k, "Built-in component", detail);
         }
         addType("input", "Interactive Input Switch");
         addType("output", "Visual Output Indicator");
@@ -294,6 +298,9 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
         addType("constant high", "Constant High Voltage");
         addType("constant low", "Constant Low Voltage");
         addType("button", "Push Button Switch");
+        addType("dff", "Edge-Triggered D Flip-Flop");
+        addType("register", "Parameterized N-Bit Register", "(width)");
+        addType("counter", "Parameterized N-Bit Binary Up-Counter", "(width)");
         addType("npn", "NPN Transistor Switch");
         addType("pnp", "PNP Transistor Switch");
         addType("7-segment display", "7-Segment LED Display");
@@ -584,6 +591,15 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
                         });
                     }
                 }
+            }
+        }
+        if (["register", "counter"].includes(modName.toLowerCase())) {
+            if (!candidates.some(c => c.name === "width=")) {
+                candidates.push({
+                    name: "width=",
+                    type: "parameter",
+                    desc: `Parameter 'width' for ${modName}`
+                });
             }
         }
         // Also add scope constants and loop variables as parameter value suggestions

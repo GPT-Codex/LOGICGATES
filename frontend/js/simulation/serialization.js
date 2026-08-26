@@ -63,6 +63,12 @@ export function serializeCircuit(circuit, registry) {
             serialized.holdDuration = comp.holdDuration || 1000;
         } else if (comp.type === "DFF" || comp.type === "dff") {
             serialized.storedState = comp.storedState !== undefined ? comp.storedState : 0;
+        } else if (comp.type === "Register" || comp.type === "REGISTER" || comp.type === "register") {
+            serialized.widthBits = comp.widthBits || 8;
+            serialized.storedState = comp.storedState || [];
+        } else if (comp.type === "Counter" || comp.type === "COUNTER" || comp.type === "counter") {
+            serialized.widthBits = comp.widthBits || 4;
+            serialized.count = comp.count || 0;
         } else if (comp.type === "UserModule" && comp.definition) {
             serialized.definitionId = comp.definition.id;
             serialized.pinPositions = comp.pins().map(p => ({
@@ -228,6 +234,22 @@ export function deserializeCircuit(data, circuit, registry) {
                 comp.storedState = compData.storedState;
                 comp.outputs[0].value = comp.storedState;
                 comp.outputs[1].value = comp.storedState === 1 ? 0 : 1;
+            }
+        } else if (comp.type === "Register" || comp.type === "REGISTER" || comp.type === "register") {
+            if (compData.widthBits !== undefined) {
+                comp.setWidth(compData.widthBits);
+            }
+            if (compData.storedState && Array.isArray(compData.storedState)) {
+                comp.storedState = compData.storedState;
+                comp.evaluate();
+            }
+        } else if (comp.type === "Counter" || comp.type === "COUNTER" || comp.type === "counter") {
+            if (compData.widthBits !== undefined) {
+                comp.setWidth(compData.widthBits);
+            }
+            if (compData.count !== undefined) {
+                comp.count = compData.count;
+                comp.evaluate();
             }
         } else if (comp.type === "UserModule" && compData.pinPositions) {
             compData.pinPositions.forEach(pos => {

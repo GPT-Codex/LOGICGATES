@@ -329,6 +329,8 @@ Supported built-in component types:
 - `constant high` / `constant low`
 - `button` (Push Button Switch)
 - `dff` / `DFF` (Edge-Triggered D Flip-Flop)
+- `register` / `REGISTER(width)` (Parameterized N-Bit Register)
+- `counter` / `COUNTER(width)` (Parameterized N-Bit Binary Up-Counter)
 - `and` / `nand`
 - `or` / `nor`
 - `xor` / `xnor`
@@ -686,25 +688,46 @@ connect FF0./Q -> FF0.D
 connect FF0.Q -> DIV2.D
 ```
 
-### Scripted 8-Bit Register Module Example (`REG8`)
-D Flip-Flops can be composed inside custom and parameterized subcircuit modules using `for` loops:
+### Built-in Parameterized Register (`REGISTER`)
+The simulator provides a built-in parameterized register component:
+- **Syntax:** `add REGISTER(width) NAME` (e.g. `add REGISTER(16) R16`, `add REGISTER(8) R8`). Default width is 8 bits.
+- **Pins:**
+  - `D[0..width-1]` (Inputs): Vector data input
+  - `CLK` (Input): Clock trigger signal
+  - `Q[0..width-1]` (Outputs): Stored vector output
+- **Behavior:** On the rising edge of `CLK` (0 → 1), all `width` bits of `Q` sample `D[0..width-1]` simultaneously. Between clock edges, `Q` remains unchanged. Initial state is `0`.
 
+Example:
 ```sim
-# 8-Bit Edge-Triggered Register Module
-module REG8 {
-    input D[0..7]
-    input CLK
-    output Q[0..7]
+add clock CLK
+bus IN[0..7]
+bus OUT[0..7]
 
-    add dff FF[0..7]
+add REGISTER(8) REG8
+move REG8 to (300, 200)
 
-    for i in 0..7 {
-        connect D[i] -> FF[i].D
-        connect CLK -> FF[i].CLK
-        connect FF[i].Q -> Q[i]
-    }
-}
+connect CLK.CLK -> REG8.CLK
+connect IN REG8.D
+connect REG8.Q OUT
+```
 
-add REG8 R8
-move R8 to (300, 200)
+### Built-in Parameterized Binary Up-Counter (`COUNTER`)
+The simulator provides a built-in parameterized binary up-counter component:
+- **Syntax:** `add COUNTER(width) NAME` (e.g. `add COUNTER(8) C8`, `add COUNTER(4) C4`). Default width is 4 bits.
+- **Pins:**
+  - `CLK` (Input): Clock trigger signal
+  - `EN` (Input): Enable control (defaults to HIGH / 1 when disconnected)
+  - `Q[0..width-1]` (Outputs): Current binary count vector
+- **Behavior:** On every rising edge of `CLK` (0 → 1), if `EN = 1`, the internal count increments by 1 with modulo $2^\text{width}$ wraparound ($255 \to 0$ for 8-bit). Initial state is `0`.
+
+Example:
+```sim
+add clock CLK
+add COUNTER(8) COUNT8
+move COUNT8 to (300, 200)
+
+bus COUNT_VAL[0..7]
+
+connect CLK.CLK -> COUNT8.CLK
+connect COUNT8.Q COUNT_VAL
 ```
