@@ -4,7 +4,7 @@ import { SimulationEngine } from "../frontend/js/simulation/simulation_engine.js
 import { CommandEngine } from "../frontend/js/simulation/command_engine.js";
 import { ModuleRegistry, ModuleDefinition } from "../frontend/js/simulation/modules.js";
 
-function runTests() {
+async function runTests() {
     console.log("Running Visual -> .sim -> New Project Round-Trip unit tests...");
 
     // Test 1: Standard Components, Properties & Wire Round-Trip
@@ -52,7 +52,7 @@ function runTests() {
         const engine2 = new SimulationEngine(circuit2);
         const commandEngine2 = new CommandEngine(circuit2, null, null, engine2);
 
-        const importRes = commandEngine2.executeScript(script1);
+        const importRes = await commandEngine2.executeScript(script1);
         assert(importRes.success, `Importing S1 into new project failed: ${importRes.error}`);
 
         // 3. Assert Graph Equivalence
@@ -104,7 +104,7 @@ function runTests() {
         const engine2 = new SimulationEngine(circuit2);
         const commandEngine2 = new CommandEngine(circuit2, null, null, engine2);
 
-        const res = commandEngine2.executeScript(script1);
+        const res = await commandEngine2.executeScript(script1);
         assert(res.success, `Nets/Buses script import failed: ${res.error}`);
 
         assert.strictEqual(circuit2.components.size, circuit1.components.size, "Nets/Buses component count should match");
@@ -162,7 +162,7 @@ function runTests() {
         const engine2 = new SimulationEngine(circuit2);
         const commandEngine2 = new CommandEngine(circuit2, registry, null, engine2);
 
-        const res = commandEngine2.executeScript(script1);
+        const res = await commandEngine2.executeScript(script1);
         assert(res.success, `Custom module script import failed: ${res.error}`);
 
         const ha2 = circuit2.components.get("HA1");
@@ -177,4 +177,4 @@ function runTests() {
     console.log("Visual -> .sim -> New Project Round-Trip unit tests passed successfully!");
 }
 
-runTests();
+await runTests();

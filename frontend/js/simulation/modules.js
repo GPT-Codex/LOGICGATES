@@ -1,4 +1,4 @@
-import { Component, Circuit, Pin, Wire } from "./core.js";
+import { Component, Circuit, Pin, Wire, naturalCompare } from "./core.js";
 import { createComponent } from "./components.js";
 import { SimulationEngine } from "./simulation_engine.js";
 import { findDefinitionByNameAndType } from "./serialization.js";
@@ -175,9 +175,9 @@ export class UserModule extends Component {
         this.width = 100;
         this.height = Math.max(60, pinCount * 22 + 20);
 
-        // Sort inputs and outputs alphabetically by pin name
-        const sortedInputs = [...definition.inputs].sort((a, b) => a.localeCompare(b));
-        const sortedOutputs = [...definition.outputs].sort((a, b) => a.localeCompare(b));
+        // Sort inputs and outputs using natural numeric comparison for indexed pin names
+        const sortedInputs = [...definition.inputs].sort(naturalCompare);
+        const sortedOutputs = [...definition.outputs].sort(naturalCompare);
 
         // Add external pins
         this.inputs = [];

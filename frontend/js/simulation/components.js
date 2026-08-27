@@ -1250,6 +1250,447 @@ export class PNPTransistorGate extends Component {
 /**
  * Mapping of component types to their constructor classes.
  */
+export class DFFGate extends Component {
+    constructor(id, x, y) {
+        super(id, "DFF", x, y);
+        this.width = 60;
+        this.height = 50;
+
+        // Inputs: D, CLK
+        const inD = this.addInput(`${id}_inD`, "D");
+        inD.relX = -30;
+        inD.relY = -12;
+
+        const inCLK = this.addInput(`${id}_inCLK`, "CLK");
+        inCLK.relX = -30;
+        inCLK.relY = 12;
+
+        // Outputs: Q, /Q
+        const outQ = this.addOutput(`${id}_outQ`, "Q");
+        outQ.relX = 30;
+        outQ.relY = -12;
+
+        const outQBar = this.addOutput(`${id}_outQBar`, "/Q");
+        outQBar.relX = 30;
+        outQBar.relY = 12;
+
+        // Internal sequential state
+        this.storedState = 0; // Q initial state = 0
+        this.prevClk = 0;
+
+        // Evaluate initial outputs
+        this.outputs[0].value = 0; // Q
+        this.outputs[1].value = 1; // /Q
+    }
+
+    evaluate() {
+        const currentD = this.inputs[0].value === 1 ? 1 : 0;
+        const currentClk = this.inputs[1].value === 1 ? 1 : 0;
+
+        // Positive edge trigger detection: 0 -> 1 on CLK
+        if (this.prevClk === 0 && currentClk === 1) {
+            this.storedState = currentD;
+        }
+        this.prevClk = currentClk;
+
+        this.outputs[0].value = this.storedState;
+        this.outputs[1].value = this.storedState === 1 ? 0 : 1;
+    }
+
+    draw(ctx, isSelected) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
+
+        if (isSelected) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#3498db";
+            ctx.strokeStyle = "#3498db";
+            ctx.lineWidth = 2.5;
+        } else {
+            ctx.strokeStyle = "#4e4e4e";
+            ctx.lineWidth = 1.5;
+        }
+
+        ctx.fillStyle = "#1e293b";
+        ctx.beginPath();
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        // Clock pin triangle symbol on CLK input
+        ctx.strokeStyle = "#3498db";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(-this.width / 2, 6);
+        ctx.lineTo(-this.width / 2 + 8, 12);
+        ctx.lineTo(-this.width / 2, 18);
+        ctx.stroke();
+        ctx.restore();
+
+        // Pin labels inside box
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "bold 10px monospace";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText("D", -this.width / 2 + 6, -12);
+        ctx.fillText("CLK", -this.width / 2 + 10, 12);
+
+        ctx.textAlign = "right";
+        ctx.fillText("Q", this.width / 2 - 6, -12);
+        ctx.fillText("/Q", this.width / 2 - 6, 12);
+
+        // Center Component Title
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(this.label || "DFF", 0, 0);
+
+        ctx.restore();
+
+        this.drawPins(ctx);
+    }
+}
+
+/**
+ * Mapping of component types to their constructor classes.
+ */
+export class CounterGate extends Component {
+    constructor(id, x, y, widthBits = 4) {
+        super(id, "Counter", x, y);
+        this.widthBits = Math.max(1, Math.min(64, widthBits));
+        this.count = 0;
+        this.prevClk = 0;
+
+        this.rebuildCounterPins();
+    }
+
+    rebuildCounterPins() {
+        this.inputs = [];
+        this.outputs = [];
+
+        const totalPinRows = Math.max(this.widthBits, 2);
+        this.width = 100;
+        this.height = Math.max(60, totalPinRows * 20 + 30);
+
+        // Inputs: CLK, EN
+        const clkPin = this.addInput(`${this.id}_in_CLK`, "CLK");
+        clkPin.relX = -this.width / 2;
+        clkPin.relY = -this.height / 2 + 20;
+
+        const enPin = this.addInput(`${this.id}_in_EN`, "EN");
+        enPin.relX = -this.width / 2;
+        enPin.relY = -this.height / 2 + 40;
+        enPin.value = 1; // Default EN HIGH when disconnected
+
+        // Outputs: Q[0..N-1]
+        for (let i = 0; i < this.widthBits; i++) {
+            const pinName = this.widthBits === 1 ? "Q" : `Q[${i}]`;
+            const pin = this.addOutput(`${this.id}_out_Q${i}`, pinName);
+            pin.relX = this.width / 2;
+            pin.relY = -this.height / 2 + 20 + i * 20;
+            pin.value = (this.count >> i) & 1;
+        }
+    }
+
+    setWidth(newWidth) {
+        const w = Math.max(1, Math.min(64, parseInt(newWidth) || 4));
+        if (w !== this.widthBits) {
+            this.widthBits = w;
+            const maxVal = Math.pow(2, this.widthBits);
+            this.count = this.count % maxVal;
+            this.rebuildCounterPins();
+            this.evaluate();
+        }
+    }
+
+    evaluate() {
+        const clkPin = this.inputs[0];
+        const enPin = this.inputs[1];
+
+        const currentClk = clkPin ? (clkPin.value === 1 ? 1 : 0) : 0;
+        // EN defaults to HIGH (1) if un-driven / not connected
+        const enVal = enPin ? (enPin.value !== undefined ? enPin.value : 1) : 1;
+
+        // Rising clock edge (0 -> 1)
+        if (this.prevClk === 0 && currentClk === 1) {
+            if (enVal === 1) {
+                const maxCount = Math.pow(2, this.widthBits);
+                this.count = (this.count + 1) % maxCount;
+            }
+        }
+        this.prevClk = currentClk;
+
+        for (let i = 0; i < this.widthBits; i++) {
+            if (this.outputs[i]) {
+                this.outputs[i].value = (this.count >> i) & 1;
+            }
+        }
+    }
+
+    draw(ctx, isSelected) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
+
+        if (isSelected) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#3498db";
+            ctx.strokeStyle = "#3498db";
+            ctx.lineWidth = 2.5;
+        } else {
+            ctx.strokeStyle = "#4e4e4e";
+            ctx.lineWidth = 1.5;
+        }
+
+        ctx.fillStyle = "#1e293b";
+        ctx.beginPath();
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        // Clock pin triangle symbol on CLK (-width/2, -height/2 + 20)
+        const clkY = -this.height / 2 + 20;
+        ctx.strokeStyle = "#3498db";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(-this.width / 2, clkY - 5);
+        ctx.lineTo(-this.width / 2 + 8, clkY);
+        ctx.lineTo(-this.width / 2, clkY + 5);
+        ctx.stroke();
+        ctx.restore();
+
+        // Title
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(this.label || `COUNT(${this.widthBits})`, 0, 0);
+
+        ctx.restore();
+
+        this.drawPins(ctx);
+    }
+}
+
+export class RegisterGate extends Component {
+    constructor(id, x, y, widthBits = 8) {
+        super(id, "Register", x, y);
+        this.widthBits = Math.max(1, Math.min(256, widthBits));
+        this.storedState = new Array(this.widthBits).fill(0);
+        this.prevClk = 0;
+
+        this.rebuildRegisterPins();
+    }
+
+    rebuildRegisterPins() {
+        this.inputs = [];
+        this.outputs = [];
+
+        const totalPinRows = Math.max(this.widthBits, 2);
+        this.width = 100;
+        this.height = Math.max(60, totalPinRows * 20 + 30);
+
+        // Inputs: D[0..N-1], CLK
+        for (let i = 0; i < this.widthBits; i++) {
+            const pinName = this.widthBits === 1 ? "D" : `D[${i}]`;
+            const pin = this.addInput(`${this.id}_in_D${i}`, pinName);
+            pin.relX = -this.width / 2;
+            pin.relY = -this.height / 2 + 20 + i * 20;
+        }
+
+        const clkPin = this.addInput(`${this.id}_in_CLK`, "CLK");
+        clkPin.relX = -this.width / 2;
+        clkPin.relY = this.height / 2 - 15;
+
+        // Outputs: Q[0..N-1]
+        for (let i = 0; i < this.widthBits; i++) {
+            const pinName = this.widthBits === 1 ? "Q" : `Q[${i}]`;
+            const pin = this.addOutput(`${this.id}_out_Q${i}`, pinName);
+            pin.relX = this.width / 2;
+            pin.relY = -this.height / 2 + 20 + i * 20;
+            pin.value = this.storedState[i] || 0;
+        }
+    }
+
+    setWidth(newWidth) {
+        const w = Math.max(1, Math.min(256, parseInt(newWidth) || 8));
+        if (w !== this.widthBits) {
+            this.widthBits = w;
+            const oldState = this.storedState || [];
+            this.storedState = new Array(this.widthBits).fill(0);
+            for (let i = 0; i < Math.min(oldState.length, this.widthBits); i++) {
+                this.storedState[i] = oldState[i];
+            }
+            this.rebuildRegisterPins();
+            this.evaluate();
+        }
+    }
+
+    evaluate() {
+        // CLK is the last input pin
+        const clkPin = this.inputs[this.inputs.length - 1];
+        const currentClk = clkPin ? (clkPin.value === 1 ? 1 : 0) : 0;
+
+        // Rising clock edge (0 -> 1)
+        if (this.prevClk === 0 && currentClk === 1) {
+            for (let i = 0; i < this.widthBits; i++) {
+                this.storedState[i] = this.inputs[i].value === 1 ? 1 : 0;
+            }
+        }
+        this.prevClk = currentClk;
+
+        for (let i = 0; i < this.widthBits; i++) {
+            if (this.outputs[i]) {
+                this.outputs[i].value = this.storedState[i] || 0;
+            }
+        }
+    }
+
+    draw(ctx, isSelected) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
+
+        if (isSelected) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#3498db";
+            ctx.strokeStyle = "#3498db";
+            ctx.lineWidth = 2.5;
+        } else {
+            ctx.strokeStyle = "#4e4e4e";
+            ctx.lineWidth = 1.5;
+        }
+
+        ctx.fillStyle = "#1e293b";
+        ctx.beginPath();
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        // Clock pin triangle symbol on CLK
+        const clkY = this.height / 2 - 15;
+        ctx.strokeStyle = "#3498db";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(-this.width / 2, clkY - 5);
+        ctx.lineTo(-this.width / 2 + 8, clkY);
+        ctx.lineTo(-this.width / 2, clkY + 5);
+        ctx.stroke();
+        ctx.restore();
+
+        // Title
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(this.label || `REG(${this.widthBits})`, 0, 0);
+
+        ctx.restore();
+
+        this.drawPins(ctx);
+    }
+}
+
+export class MUXGate extends Component {
+    constructor(id, x, y) {
+        super(id, "MUX", x, y);
+        this.width = 60;
+        this.height = 50;
+
+        // Inputs: A (0), B (1), SEL (2)
+        const inA = this.addInput(`${id}_inA`, "A");
+        inA.relX = -30;
+        inA.relY = -12;
+
+        const inB = this.addInput(`${id}_inB`, "B");
+        inB.relX = -30;
+        inB.relY = 12;
+
+        const inSEL = this.addInput(`${id}_inSEL`, "SEL");
+        inSEL.relX = 0;
+        inSEL.relY = 25;
+
+        // Output: Y
+        const outY = this.addOutput(`${id}_outY`, "Y");
+        outY.relX = 30;
+        outY.relY = 0;
+    }
+
+    evaluate() {
+        const aVal = this.inputs[0].value === 1 ? 1 : 0;
+        const bVal = this.inputs[1].value === 1 ? 1 : 0;
+        const selVal = this.inputs[2].value === 1 ? 1 : 0;
+
+        this.outputs[0].value = selVal === 1 ? bVal : aVal;
+    }
+
+    draw(ctx, isSelected) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
+
+        if (isSelected) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#f39c12";
+            ctx.strokeStyle = "#f39c12";
+            ctx.lineWidth = 2.5;
+        } else {
+            ctx.strokeStyle = "#e67e22";
+            ctx.lineWidth = 1.5;
+        }
+
+        ctx.fillStyle = "#3d2214";
+
+        // Draw classic trapezoidal MUX shape (wide left, narrow right)
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.beginPath();
+        const hw = this.width / 2;
+        const hLeft = this.height / 2;
+        const hRight = this.height / 2 - 10;
+
+        ctx.moveTo(-hw, -hLeft);
+        ctx.lineTo(hw, -hRight);
+        ctx.lineTo(hw, hRight);
+        ctx.lineTo(-hw, hLeft);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        // Pin labels
+        ctx.fillStyle = "#f39c12";
+        ctx.font = "bold 10px monospace";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText("A", -this.width / 2 + 6, -12);
+        ctx.fillText("B", -this.width / 2 + 6, 12);
+
+        ctx.textAlign = "center";
+        ctx.fillText("S", 0, this.height / 2 - 8);
+
+        ctx.textAlign = "right";
+        ctx.fillText("Y", this.width / 2 - 6, 0);
+
+        // Center Title
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(this.label || "MUX", 2, 0);
+
+        ctx.restore();
+
+        this.drawPins(ctx);
+    }
+}
+
 export const COMPONENT_REGISTRY = {
     "Input": InputGate,
     "Output": OutputGate,
@@ -1269,7 +1710,19 @@ export const COMPONENT_REGISTRY = {
     "10-Segment Display": TenSegmentGate,
     "Button": ButtonGate,
     "NPN Transistor": NPNTransistorGate,
-    "PNP Transistor": PNPTransistorGate
+    "PNP Transistor": PNPTransistorGate,
+    "DFF": DFFGate,
+    "dff": DFFGate,
+    "Register": RegisterGate,
+    "REGISTER": RegisterGate,
+    "register": RegisterGate,
+    "Counter": CounterGate,
+    "COUNTER": CounterGate,
+    "counter": CounterGate,
+    "MUX": MUXGate,
+    "mux": MUXGate,
+    "2:1 MUX": MUXGate,
+    "2:1 Multiplexer": MUXGate
 };
 
 /**

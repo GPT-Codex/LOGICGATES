@@ -1552,6 +1552,122 @@ kbd {
 }
 
 /* ==========================================================================
+   AUTOCOMPLETE POPUP STYLES
+   ========================================================================== */
+
+.sim-autocomplete-popup {
+    position: absolute;
+    z-index: 1000;
+    width: max-content;
+    min-width: 220px;
+    max-width: 360px;
+    max-height: 220px;
+    overflow-y: auto;
+    background-color: #1e2227;
+    border: 1px solid #333842;
+    border-radius: 6px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.55);
+    padding: 4px 0;
+    font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+}
+
+.sim-auto-item {
+    padding: 6px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    cursor: pointer;
+    transition: background-color 0.12s, color 0.12s;
+}
+
+.sim-auto-item:hover,
+.sim-auto-item.is-selected {
+    background-color: #2c313a;
+}
+
+.sim-auto-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.sim-auto-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #e6e9ee;
+}
+
+.sim-auto-detail {
+    font-size: 11px;
+    color: #9cdcfe;
+    margin-right: auto;
+}
+
+.sim-auto-sub {
+    font-size: 10.5px;
+    color: #7f848e;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sim-auto-badge {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.sim-auto-badge.is-command {
+    background-color: rgba(97, 175, 239, 0.2);
+    color: #61afef;
+}
+
+.sim-auto-badge.is-keyword {
+    background-color: rgba(199, 146, 234, 0.2);
+    color: #c792ea;
+}
+
+.sim-auto-badge.is-component {
+    background-color: rgba(78, 201, 176, 0.2);
+    color: #4ec9b0;
+}
+
+.sim-auto-badge.is-module {
+    background-color: rgba(195, 232, 141, 0.2);
+    color: #c3e88d;
+}
+
+.sim-auto-badge.is-instance {
+    background-color: rgba(230, 192, 123, 0.2);
+    color: #e6c07b;
+}
+
+.sim-auto-badge.is-pin {
+    background-color: rgba(247, 140, 108, 0.2);
+    color: #f78c6c;
+}
+
+.sim-auto-badge.is-property {
+    background-color: rgba(156, 220, 254, 0.2);
+    color: #9cdcfe;
+}
+
+.sim-auto-badge.is-alias {
+    background-color: rgba(232, 122, 194, 0.2);
+    color: #e87ac2;
+}
+
+.sim-auto-badge.is-constant,
+.sim-auto-badge.is-variable {
+    background-color: rgba(226, 179, 65, 0.2);
+    color: #e2b341;
+}
+
+/* ==========================================================================
    STATUS / UTILITY COMPATIBILITY
    ========================================================================== */
 

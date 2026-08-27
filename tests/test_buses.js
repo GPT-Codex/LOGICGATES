@@ -6,7 +6,7 @@ import { HistoryManager } from "../frontend/js/canvas/interactions.js";
 import { CommandEngine } from "../frontend/js/simulation/command_engine.js";
 import { serializeCircuit, deserializeCircuit } from "../frontend/js/simulation/serialization.js";
 
-function runBusTests() {
+async function runBusTests() {
     console.log("Running First-Class Buses & Vector Operations unit tests...");
 
     const registry = new ModuleRegistry();
@@ -106,7 +106,7 @@ function runBusTests() {
         connect IN_BUS OUT_BUS
     `;
 
-    const r5 = commandEngine.executeScript(loopBusScript);
+    const r5 = await commandEngine.executeScript(loopBusScript);
     assert(r5.success, `Loop bus script failed: ${r5.error}`);
 
     // Verify electrical propagation through loop-connected bus
@@ -143,7 +143,7 @@ function runBusTests() {
     const newEngine = new SimulationEngine(newCircuit);
     const newCmdEngine = new CommandEngine(newCircuit, registry, null, newEngine);
 
-    const importRes = newCmdEngine.executeScript(exportedScript);
+    const importRes = await newCmdEngine.executeScript(exportedScript);
     assert(importRes.success, `Importing exported script failed: ${importRes.error}`);
     assert(newCircuit.buses.has("A"));
     assert(newCircuit.buses.has("C"));
@@ -152,4 +152,4 @@ function runBusTests() {
     console.log("First-Class Buses & Vector Operations unit tests passed successfully!");
 }
 
-runBusTests();
+await runBusTests();

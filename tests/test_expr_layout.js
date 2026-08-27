@@ -6,7 +6,7 @@ import { HistoryManager } from "../frontend/js/canvas/interactions.js";
 import { CommandEngine } from "../frontend/js/simulation/command_engine.js";
 import { serializeCircuit, deserializeCircuit } from "../frontend/js/simulation/serialization.js";
 
-function runExprLayoutTests() {
+async function runExprLayoutTests() {
     console.log("Running Expression Layout & Anchoring unit tests...");
 
     const registry = new ModuleRegistry();
@@ -33,7 +33,7 @@ function runExprLayoutTests() {
         expr O = A XOR B
     `;
 
-    const r1 = commandEngine.executeScript(script1);
+    const r1 = await commandEngine.executeScript(script1);
     assert(r1.success, `Script 1 failed: ${r1.error}`);
 
     const aComp = circuit.components.get("A");
@@ -62,7 +62,7 @@ function runExprLayoutTests() {
         expr S_NEW = A AND B
     `;
 
-    const r2 = commandEngine.executeScript(script2);
+    const r2 = await commandEngine.executeScript(script2);
     assert(r2.success, `Script 2 failed: ${r2.error}`);
 
     const uIn = circuit.components.get("UNRELATED_IN");
@@ -93,7 +93,7 @@ function runExprLayoutTests() {
         }
     `;
 
-    const r3 = commandEngine.executeScript(script3);
+    const r3 = await commandEngine.executeScript(script3);
     assert(r3.success, `Repeated expr script failed: ${r3.error}`);
 
     for (let i = 0; i <= 3; i++) {
@@ -115,7 +115,7 @@ function runExprLayoutTests() {
         expr TARGET = TARGET XOR IN_VAL
     `;
 
-    const failRes = commandEngine.executeScript(selfRefScript);
+    const failRes = await commandEngine.executeScript(selfRefScript);
     assert(!failRes.success, "Self-referential expression must be rejected");
     assert(failRes.error.includes("referenced by its own expression"), "Error should report self-reference");
     assert.strictEqual(circuit.components.size, preSelfCount, "State must roll back on self-reference failure");
@@ -149,4 +149,4 @@ function runExprLayoutTests() {
     console.log("Expression Layout & Anchoring unit tests passed successfully!");
 }
 
-runExprLayoutTests();
+await runExprLayoutTests();

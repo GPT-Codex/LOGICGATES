@@ -20,7 +20,7 @@ The `.sim` circuit scripting language allows you to create, modify, connect, and
 | `list` | `list` | List all components, buses, and wires in the active circuit. |
 | `net` | `net NAME` | Create a net signal node (buffer pass-through). |
 | `const` | `const NAME = EXPR` | Declare an immutable compile-time integer constant. |
-| `import` | `import "PATH"` / `import './PATH'` | Import reusable constants and module definitions from a script library file. |
+| `import` | `import "module"` / `import "module" as alias` | Import reusable constants and module definitions with optional namespace aliases. |
 | `bus` | `bus NAME[START..END]` | Declare a first-class $N$-bit bus vector. |
 | `expr` | `expr OUTPUT = BOOLEAN_EXPRESSION` | Synthesize a boolean expression into gates and wires. |
 | `for` | `for VAR in START..END { ... }` | Loop over an inclusive numerical range. |
@@ -207,24 +207,34 @@ Constants can be used anywhere compile-time integer expressions are accepted:
 
 ## 4. Reusable Script Libraries & Imports (`import`)
 
-Import reusable constants and module definitions from external `.sim` files:
+Import reusable constants and module definitions from server-provided `.sim` library files:
 
 ```sim
-import "./lib/arithmetic.sim"
+import "logic" as logic
+import "arithmetic" as arithmetic
 ```
 
-### Import Semantics
-- **Definitions-Only Loading:** `import` loads constants and compiles `module` blocks into the module registry. Importing a library file **never** places components on the circuit canvas directly; instantiation requires explicit `add` commands in your project script.
-- **Relative Path Resolution:** Paths starting with `./` or `../` are resolved relative to the directory containing the importing script. Standard paths like `std/logic.sim` resolve against the library search paths.
-- **Deduplication:** Multiple imports of the same file (e.g. `import "./logic.sim"` in two different files) load and compile the library at most once.
-- **Circular Import Detection:** Circular import dependencies (`A.sim → B.sim → A.sim`) are rejected before compilation with a clear dependency chain error (`Circular import: A.sim -> B.sim -> A.sim`).
-- **Name Conflict Protection:** If two imported files attempt to define the same module or constant name, execution aborts with a source context conflict error.
+### Import Semantics & Namespaces
+- **Import Aliases:** Import statements support `import "module" as alias`. The alias establishes a local namespace for symbols provided by that library.
+- **Qualified Module References:** Definitions are referenced using dot notation (e.g. `add logic.FADDER F0` or `add arithmetic.RCA(16) ADD16`).
+- **Qualified Constants:** Compile-time constants defined in aliased imports are referenced via dot notation (e.g., `bus A[0..consts.WIDTH-1]`).
+- **Name Disambiguation:** If two imported libraries contain conflicting symbol names (e.g., both define `MUX`), using aliases prevents name collisions (`add l1.MUX MUX_A` and `add l2.MUX MUX_B`).
+- **Unqualified References & Ambiguity Errors:** Unqualified names (`add FADDER F0`) remain supported when unambiguous. If multiple aliased libraries contain candidate definitions for an unqualified name, execution aborts with a descriptive ambiguity error listing candidate choices:
+  ```text
+  Ambiguous module 'FADDER'.
 
-### Multi-File Library Structure Example
+  Candidates:
+    l1.FADDER
+    l2.FADDER
+  ```
+- **Transitive Dependency Scope:** Qualified imported modules internally referencing other modules maintain their internal dependency chains without requiring outer scripts to re-alias nested dependencies.
+- **Inspection Command:** `show import ALIAS` reports the alias name, target library path, and exported module definitions.
 
-#### `lib/logic.sim`
+### Multi-File Server Library Structure Example with Aliases
+
+#### `PROJECT_ROOT/lib/logic.sim`
 ```sim
-# Gate primitives library
+# Server primitive library
 module FADDER {
     input A
     input B
@@ -233,15 +243,14 @@ module FADDER {
     output S
     output Cout
 
-    expr S = A XOR B XOR Cin
+    expr S = (A XOR B) XOR Cin
     expr Cout = (A AND B) OR (Cin AND (A XOR B))
 }
 ```
 
-#### `lib/arithmetic.sim`
+#### `PROJECT_ROOT/lib/arithmetic.sim`
 ```sim
-# Arithmetic modules library
-import "./logic.sim"
+import "logic"
 
 const MAX_WIDTH = 256
 
@@ -273,20 +282,23 @@ module RCA(width) {
 
 #### `main.sim`
 ```sim
-# Top-level project script
-import "./lib/arithmetic.sim"
+# Top-level project script loading server library with aliases
+import "logic" as logic
+import "arithmetic" as math
 
-const WORD_SIZE = 16
-
-bus A[0..WORD_SIZE-1]
-bus B[0..WORD_SIZE-1]
-
+add input A
+add input B
 add input Cin
-add RCA(WORD_SIZE) ADD16
+add logic.FADDER FA0
+add math.RCA(16) ADD16
+add output S
 add output Cout
 
-connect Cin -> ADD16.Cin
-connect ADD16.Cout -> Cout
+connect A FA0.A
+connect B FA0.B
+connect Cin FA0.Cin
+connect FA0.S S
+connect FA0.Cout Cout
 ```
 
 ### Restrictions
@@ -316,6 +328,10 @@ Supported built-in component types:
 - `clock` (Pulse Clock Generator)
 - `constant high` / `constant low`
 - `button` (Push Button Switch)
+- `dff` / `DFF` (Edge-Triggered D Flip-Flop)
+- `register` / `REGISTER(width)` (Parameterized N-Bit Register)
+- `counter` / `COUNTER(width)` (Parameterized N-Bit Binary Up-Counter)
+- `mux` / `MUX` / `2:1 MUX` (2:1 Multiplexer)
 - `and` / `nand`
 - `or` / `nor`
 - `xor` / `xnor`
@@ -345,6 +361,52 @@ move S to (600, 150)
 
 expr S = A XOR B
 ```
+
+---
+
+## 4.2 Script Editor Autocomplete
+
+The `.sim` script editor features a context-sensitive, VS Code-style autocomplete system that provides instant suggestions as you type or upon manual invocation (`Tab`, `Ctrl+Space`, `Cmd+Space`).
+
+### Keyboard Navigation & Shortcuts
+- `Ctrl+Space` / `Cmd+Space`: Trigger autocomplete suggestions manually.
+- `ArrowUp` / `ArrowDown`: Navigate through suggestion items.
+- `Enter` / `Tab`: Accept and insert the selected completion.
+- `Escape`: Dismiss the autocomplete popup.
+
+### Contextual Suggestions
+- **Line Start:** Commands (`add`, `move`, `connect`, `set`, `remove`, `show`, `trace`, `expand`, `detach`, `list`, `net`, `const`, `import`, `bus`, `expr`, `for`, `module`, `undo`, `redo`), in-scope loop variables, and constants.
+- **After `add`:** Built-in gate types (`and`, `or`, `nand`, `nor`, `xor`, `not`, `input`, `output`, `clock`, `button`, `npn`, `pnp`, `led`, `7-segment display`, `10-segment display`), custom/scripted modules (`FullAdder`, `RCA`), and import alias prefixes (`logic.`, `math.`).
+- **After `import "`:** Available server library `.sim` files (`logic`, `arithmetic`).
+- **After `import "module" `:** Keyword `as`.
+- **After Alias (`math.`):** Exported module definitions and constants in that library namespace.
+- **After `move`, `remove`, `show`, `trace`, `expand`, `detach`:** Instance names and bus names from the active circuit graph.
+- **After `connect` / `connect A ->`:** Component names and signal sources/destinations.
+- **After `connect COMP.`:** Exposed pins and ports for component `COMP` (including vector indices).
+- **After `set COMP.`:** Properties supported by component `COMP` (`label`, `freq`, `buttonMode`, `holdDuration`, `ledColor`, `rgbaValue`, `rotation`, `flipX`, `flipY`).
+- **After `set COMP.PROPERTY `:** Enumerated property values (`Hz`, `kHz`, `MHz`, `GHz`, `press`, `hold`, `Red`, `Green`, `Blue`, `RGBA`, `true`, `false`).
+- **Module Parameters (`add RCA(`):** Parameter names (`width=`), constants, and loop variables.
+
+---
+
+## 4.1 Natural Numeric Pin Ordering
+
+Module input/output ports and vector buses containing numeric indices (such as `B[0..15]`, `A[0]..A[100]`) are sorted in natural numerical order for visual layout and display:
+
+```text
+B[0]
+B[1]
+B[2]
+...
+B[9]
+B[10]
+B[11]
+...
+B[15]
+```
+
+- **Natural Ordering:** Pin numbers are sorted by their integer values rather than lexicographical string comparison (`B[10]` comes *after* `B[9]`, not before `B[2]`).
+- **Pin Identity Stability:** Natural sorting applies strictly to visual display and layout ordering. Logical pin identifiers (`"B[10]"`) and electrical wire connections remain unchanged and fully deterministic.
 
 ---
 
@@ -595,4 +657,117 @@ move BUF0 to (300, 200)
 
 connect IN BUF0.A
 connect BUF0.O OUT
+```
+
+---
+
+## 10. Clocked Sequential Logic & D Flip-Flops (`dff`)
+
+The simulator provides first-class, edge-triggered **D Flip-Flops** (`dff`) for modeling sequential state, registers, counters, and state machines.
+
+### D Flip-Flop Pins
+- `D` (Input): Data input signal
+- `CLK` (Input): Clock trigger signal
+- `Q` (Output): Stored output signal
+- `/Q` (Output): Inverted stored output signal
+
+### Clock Semantics & Edge Triggering
+- **Positive Edge Triggered:** The flip-flop samples the value of `D` on the 0 → 1 transition (rising edge) of `CLK`.
+- **Stored State:** Between active clock edges, `Q` and `/Q` remain stable and hold their stored state regardless of changes on `D`.
+- **Initial State:** Upon instantiation or reset, the flip-flop initializes deterministically to `Q = 0` and `/Q = 1`.
+
+### Sequential State Feedback
+Unlike combinational logic where self-references produce errors, sequential logic feedback bounded by an edge-triggered `dff` is explicitly valid. For example, connecting `/Q` to `D` constructs a divide-by-2 toggle flip-flop:
+
+```sim
+add dff FF0
+add clock CLK
+add output DIV2
+
+connect CLK.CLK -> FF0.CLK
+connect FF0./Q -> FF0.D
+connect FF0.Q -> DIV2.D
+```
+
+### Built-in Parameterized Register (`REGISTER`)
+The simulator provides a built-in parameterized register component:
+- **Syntax:** `add REGISTER(width) NAME` (e.g. `add REGISTER(16) R16`, `add REGISTER(8) R8`). Default width is 8 bits.
+- **Pins:**
+  - `D[0..width-1]` (Inputs): Vector data input
+  - `CLK` (Input): Clock trigger signal
+  - `Q[0..width-1]` (Outputs): Stored vector output
+- **Behavior:** On the rising edge of `CLK` (0 → 1), all `width` bits of `Q` sample `D[0..width-1]` simultaneously. Between clock edges, `Q` remains unchanged. Initial state is `0`.
+
+Example:
+```sim
+add clock CLK
+bus IN[0..7]
+bus OUT[0..7]
+
+add REGISTER(8) REG8
+move REG8 to (300, 200)
+
+connect CLK.CLK -> REG8.CLK
+connect IN REG8.D
+connect REG8.Q OUT
+```
+
+### Built-in 2:1 Multiplexer (`mux`)
+The 2:1 Multiplexer routes input `A` or `B` to output `Y` based on select control `SEL`:
+- **Pins:** `A` (Input 0), `B` (Input 1), `SEL` (Input 2), `Y` (Output 0)
+- **Truth Table:**
+  - `SEL = 0` → `Y = A`
+  - `SEL = 1` → `Y = B`
+
+Example:
+```sim
+add input A
+add input B
+add input SEL
+add mux M0
+add output Y
+
+connect A -> M0.A
+connect B -> M0.B
+connect SEL -> M0.SEL
+connect M0.Y -> Y
+```
+
+### Parameterized Vector Multiplexer (`MUX(width)`)
+Imported from server library `lib/logic.sim`:
+```sim
+import "logic" as logic
+
+add input SEL
+bus A[0..7]
+bus B[0..7]
+bus Y[0..7]
+
+add logic.MUX(8) M8
+
+connect SEL -> M8.SEL
+connect A -> M8.A
+connect B -> M8.B
+connect M8.Y -> Y
+```
+
+### Built-in Parameterized Binary Up-Counter (`COUNTER`)
+The simulator provides a built-in parameterized binary up-counter component:
+- **Syntax:** `add COUNTER(width) NAME` (e.g. `add COUNTER(8) C8`, `add COUNTER(4) C4`). Default width is 4 bits.
+- **Pins:**
+  - `CLK` (Input): Clock trigger signal
+  - `EN` (Input): Enable control (defaults to HIGH / 1 when disconnected)
+  - `Q[0..width-1]` (Outputs): Current binary count vector
+- **Behavior:** On every rising edge of `CLK` (0 → 1), if `EN = 1`, the internal count increments by 1 with modulo $2^\text{width}$ wraparound ($255 \to 0$ for 8-bit). Initial state is `0`.
+
+Example:
+```sim
+add clock CLK
+add COUNTER(8) COUNT8
+move COUNT8 to (300, 200)
+
+bus COUNT_VAL[0..7]
+
+connect CLK.CLK -> COUNT8.CLK
+connect COUNT8.Q COUNT_VAL
 ```

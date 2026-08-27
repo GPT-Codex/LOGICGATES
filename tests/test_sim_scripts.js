@@ -4,7 +4,7 @@ import { SimulationEngine } from "../frontend/js/simulation/simulation_engine.js
 import { HistoryManager } from "../frontend/js/canvas/interactions.js";
 import { CommandEngine } from "../frontend/js/simulation/command_engine.js";
 
-function runTests() {
+async function runTests() {
     console.log("Running .sim Circuit Script unit tests...");
 
     // Test 1: Parsing and Comments
@@ -26,7 +26,7 @@ add and G1
 connect A.out G1.A # connect A to G1
 `;
 
-        const res = commandEngine.executeScript(scriptText);
+        const res = await commandEngine.executeScript(scriptText);
         assert(res.success, `Script execution failed: ${res.error}`);
         assert.strictEqual(res.linesExecuted, 4, "Should have executed 4 valid command lines");
         assert(circuit.components.has("A"), "Component A should be added");
@@ -51,7 +51,7 @@ add invalid_component_type C
 add output S
 `;
 
-        const res = commandEngine.executeScript(scriptText);
+        const res = await commandEngine.executeScript(scriptText);
         assert(!res.success, "Script should fail on invalid component type");
         assert.strictEqual(res.line, 6, "Failure line should be exactly 6");
         assert(res.error.includes("Line 6:"), `Error message should contain 'Line 6:', got: ${res.error}`);
@@ -76,7 +76,7 @@ connect A.out G1.A
 add input A
 `;
 
-        const res = commandEngine.executeScript(scriptText);
+        const res = await commandEngine.executeScript(scriptText);
         assert(!res.success, "Script should fail due to duplicate component");
         assert.strictEqual(res.line, 6, "Failure line should be 6");
 
@@ -108,7 +108,7 @@ connect A.out G1.A
 connect G1.Y S.D
 `;
 
-        const res = commandEngine.executeScript(scriptText);
+        const res = await commandEngine.executeScript(scriptText);
         assert(res.success, `Script execution failed: ${res.error}`);
         assert.strictEqual(circuit.components.size, 4, "Circuit should have 4 components");
         assert.strictEqual(circuit.wires.size, 2, "Circuit should have 2 wires");
@@ -151,7 +151,7 @@ connect G1.Y SUM.D
 connect G2.Y CARRY.D
 `;
 
-        const res1 = commandEngine.executeScript(originalScript);
+        const res1 = await commandEngine.executeScript(originalScript);
         assert(res1.success, `Original script execution failed: ${res1.error}`);
         assert.strictEqual(circuit.components.size, 6, "Original circuit should have 6 components");
         assert.strictEqual(circuit.wires.size, 6, "Original circuit should have 6 wires");
@@ -165,7 +165,7 @@ connect G2.Y CARRY.D
         assert.strictEqual(circuit.components.size, 0, "Cleared circuit should have 0 components");
 
         // Re-import exported script
-        const res2 = commandEngine.executeScript(exportedScript);
+        const res2 = await commandEngine.executeScript(exportedScript);
         assert(res2.success, `Importing exported script failed: ${res2.error}`);
 
         // Verify graph equivalence
@@ -190,4 +190,4 @@ connect G2.Y CARRY.D
     console.log(".sim Circuit Script unit tests passed successfully!");
 }
 
-runTests();
+await runTests();
