@@ -1,4 +1,4 @@
-import { getCompletions, fetchServerLibraries } from "./autocomplete.js";
+import { getCompletions, fetchServerLibraries, extractScriptImports, ensureLibraryCached } from "./autocomplete.js";
 
 /**
  * .sim Script Editor — presentation layer only.
@@ -30,7 +30,7 @@ const COMMANDS = new Set([
 
 const COMP_TYPES = new Set([
   "input", "output", "clock", "and", "or", "xor", "not", "nand", "nor",
-  "xnor", "buffer", "button", "npn", "pnp", "led", "dff", "register", "counter",
+  "xnor", "buffer", "button", "npn", "pnp", "led", "dff", "register", "counter", "mux",
 ]);
 
 /** Multi-word component types, matched before single words. */
@@ -685,6 +685,11 @@ export class ScriptEditor {
     const ta = this.textareaEl;
     const offset = ta.selectionStart;
     const fullText = ta.value;
+
+    const scriptImports = extractScriptImports(fullText);
+    for (const imp of scriptImports) {
+      ensureLibraryCached(imp.libName);
+    }
 
     const envContext = {
       circuit: this.options.circuit || null,

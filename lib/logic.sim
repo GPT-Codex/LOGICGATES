@@ -8,3 +8,18 @@ module FADDER {
     expr S = A XOR B XOR Cin
     expr Cout = (A AND B) OR (Cin AND (A XOR B))
 }
+
+module MUX(width) {
+    input A[0..width-1]
+    input B[0..width-1]
+    input SEL
+    output Y[0..width-1]
+
+    for i in 0..width-1 {
+        add mux M[i]
+        connect A[i] -> M[i].A
+        connect B[i] -> M[i].B
+        connect SEL -> M[i].SEL
+        connect M[i].Y -> Y[i]
+    }
+}

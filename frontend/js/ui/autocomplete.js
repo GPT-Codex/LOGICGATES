@@ -88,6 +88,88 @@ export async function fetchServerLibraries() {
  * @param {string} fullText
  * @returns {Array<{ name: string, params: string[], inputs: string[], outputs: string[], type: string, desc: string, detail: string }>}
  */
+/**
+ * Extract import statements from script text.
+ * @param {string} fullText
+ * @returns {Array<{ rawImport: string, libName: string, alias: string|null }>}
+ */
+export function extractScriptImports(fullText) {
+    if (!fullText) return [];
+    const imports = [];
+    const seen = new Set();
+
+    const lines = fullText.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        const cIdx = line.indexOf("#");
+        if (cIdx !== -1) line = line.substring(0, cIdx);
+        const trimmed = line.trim();
+
+        const match = trimmed.match(/^import\s+["']([^"']+)["'](?:\s+as\s+([a-zA-Z_][a-zA-Z0-9_]*))?/i);
+        if (match) {
+            const rawImport = match[1].trim();
+            const alias = match[2] ? match[2].trim() : null;
+            const key = `${rawImport}:${alias || ""}`;
+            if (!seen.has(key)) {
+                seen.add(key);
+                imports.push({ rawImport, libName: rawImport, alias });
+            }
+        }
+    }
+
+    return imports;
+}
+
+/**
+ * Global cache of server library definitions for instant autocomplete resolution.
+ */
+export const LIBRARY_CACHE = new Map();
+
+// Seed default known server libraries for instant offline/test availability
+LIBRARY_CACHE.set("logic", {
+    modules: [
+        { name: "FADDER", params: [], inputs: ["A", "B", "Cin"], outputs: ["S", "Cout"], type: "module", desc: "Module FADDER" }
+    ],
+    constants: new Map()
+});
+
+LIBRARY_CACHE.set("arithmetic", {
+    modules: [
+        { name: "RCA", params: ["width"], inputs: ["A", "B", "Cin"], outputs: ["S", "Cout"], type: "module", desc: "Module RCA(width)" },
+        { name: "FADDER", params: [], inputs: ["A", "B", "Cin"], outputs: ["S", "Cout"], type: "module", desc: "Module FADDER" }
+    ],
+    constants: new Map([["MAX_WIDTH", 256]])
+});
+
+export async function ensureLibraryCached(libName) {
+    if (!libName) return null;
+    const norm = libName.toLowerCase();
+
+    try {
+        if (typeof fetch === "function") {
+            const response = await fetch("/api/import", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ file: libName })
+            });
+            const data = await response.json();
+            if (data && data.INFO === "OK" && data.DATA) {
+                const libScript = data.DATA;
+                const mods = extractScriptModules(libScript);
+                const { constants } = extractScopeMetadata(libScript, 99999);
+
+                const libEntry = { modules: mods, constants };
+                LIBRARY_CACHE.set(norm, libEntry);
+                return libEntry;
+            }
+        }
+    } catch (e) {
+        // Fallback
+    }
+
+    return LIBRARY_CACHE.get(norm) || null;
+}
+
 export function extractScriptModules(fullText) {
     if (!fullText) return [];
     const modules = [];
@@ -320,7 +402,32 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
             mods.push(sm);
         }
 
-        // 2. Compiled or imported module definitions from registry
+        // 2. Unaliased imported library modules extracted directly from editor text imports
+        const scriptImports = extractScriptImports(fullText);
+        for (const imp of scriptImports) {
+            if (!imp.alias) {
+                const cached = LIBRARY_CACHE.get(imp.libName.toLowerCase());
+                if (cached && cached.modules) {
+                    for (const sm of cached.modules) {
+                        if (!seen.has(sm.name.toLowerCase())) {
+                            seen.add(sm.name.toLowerCase());
+                            const paramsStr = sm.params && sm.params.length > 0 ? `(${sm.params.join(", ")})` : "";
+                            mods.push({
+                                name: sm.name,
+                                type: "module",
+                                desc: `Imported module ${sm.name}${paramsStr} from '${imp.rawImport}'`,
+                                detail: paramsStr,
+                                params: sm.params || [],
+                                inputs: sm.inputs || [],
+                                outputs: sm.outputs || []
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Compiled or imported module definitions from registry
         if (registry) {
             for (const def of registry.definitions.values()) {
                 if (!seen.has(def.name.toLowerCase())) {
@@ -344,15 +451,33 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
     // Helper: collect imported library aliases
     const getImportAliases = () => {
         const aliases = [];
+        const seen = new Set();
+
+        // From script text imports
+        const scriptImports = extractScriptImports(fullText);
+        for (const imp of scriptImports) {
+            if (imp.alias && !seen.has(imp.alias.toLowerCase())) {
+                seen.add(imp.alias.toLowerCase());
+                aliases.push({
+                    name: imp.alias,
+                    type: "alias",
+                    desc: `Import namespace '${imp.alias}' (${imp.rawImport})`
+                });
+            }
+        }
+
         if (fileImportAliases) {
             for (const [filePath, aliasMap] of fileImportAliases.entries()) {
                 if (aliasMap) {
                     for (const aliasInfo of aliasMap.values()) {
-                        aliases.push({
-                            name: aliasInfo.alias,
-                            type: "alias",
-                            desc: `Import namespace '${aliasInfo.alias}' (${aliasInfo.rawImport})`
-                        });
+                        if (!seen.has(aliasInfo.alias.toLowerCase())) {
+                            seen.add(aliasInfo.alias.toLowerCase());
+                            aliases.push({
+                                name: aliasInfo.alias,
+                                type: "alias",
+                                desc: `Import namespace '${aliasInfo.alias}' (${aliasInfo.rawImport})`
+                            });
+                        }
                     }
                 }
             }
@@ -481,12 +606,28 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
         const aliasName = dotSymbolMatch[1];
         const prefix = dotSymbolMatch[2];
 
-        // Check if ALIAS is an import alias or component name on circuit
+        // 1. Check if ALIAS is an import alias in script text imports
+        const scriptImports = extractScriptImports(fullText);
+        const matchedImport = scriptImports.find(imp => imp.alias && imp.alias.toLowerCase() === aliasName.toLowerCase());
+
+        let targetLib = matchedImport ? matchedImport.libName.toLowerCase() : null;
+
         const matchingDefs = [];
         if (registry) {
             for (const def of registry.definitions.values()) {
                 if (def.aliases && def.aliases.some(a => a.toLowerCase() === aliasName.toLowerCase())) {
                     matchingDefs.push(def);
+                }
+            }
+        }
+
+        if (targetLib && LIBRARY_CACHE.has(targetLib)) {
+            const cached = LIBRARY_CACHE.get(targetLib);
+            if (cached && cached.modules) {
+                for (const sm of cached.modules) {
+                    if (!matchingDefs.some(d => d.name.toLowerCase() === sm.name.toLowerCase())) {
+                        matchingDefs.push(sm);
+                    }
                 }
             }
         }
@@ -502,15 +643,29 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
                     detail: paramsStr
                 });
             }
-            // Also include exported constants for this alias
+            // Include constants for this alias from LIBRARY_CACHE or constants
+            if (targetLib && LIBRARY_CACHE.has(targetLib)) {
+                const cached = LIBRARY_CACHE.get(targetLib);
+                if (cached && cached.constants) {
+                    for (const [ck, cv] of cached.constants.entries()) {
+                        candidates.push({
+                            name: ck,
+                            type: "constant",
+                            desc: `Imported constant = ${cv}`
+                        });
+                    }
+                }
+            }
             for (const [k, v] of constants.entries()) {
                 if (k.toLowerCase().startsWith(`${aliasName.toLowerCase()}.`)) {
                     const constName = k.substring(aliasName.length + 1);
-                    candidates.push({
-                        name: constName,
-                        type: "constant",
-                        desc: `Imported constant = ${v}`
-                    });
+                    if (!candidates.some(c => c.name.toLowerCase() === constName.toLowerCase())) {
+                        candidates.push({
+                            name: constName,
+                            type: "constant",
+                            desc: `Imported constant = ${v}`
+                        });
+                    }
                 }
             }
             return {
@@ -575,6 +730,23 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
                             type: "parameter",
                             desc: `Parameter '${p}' for ${def.name}`
                         });
+                    }
+                }
+            }
+        }
+        for (const [libKey, cached] of LIBRARY_CACHE.entries()) {
+            if (cached && cached.modules) {
+                for (const sm of cached.modules) {
+                    if (sm.name.toLowerCase() === modName.toLowerCase() && sm.params) {
+                        for (const p of sm.params) {
+                            if (!candidates.some(c => c.name === `${p}=`)) {
+                                candidates.push({
+                                    name: `${p}=`,
+                                    type: "parameter",
+                                    desc: `Parameter '${p}' for ${sm.name}`
+                                });
+                            }
+                        }
                     }
                 }
             }

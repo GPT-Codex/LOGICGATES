@@ -12,6 +12,7 @@
 
 import { Circuit, Wire, Bus } from "./core.js";
 import { ModuleDefinition, ModuleDependencyGraph } from "./modules.js";
+import { COMPONENT_REGISTRY } from "./components.js";
 
 /**
  * Normalize file path string.
@@ -1143,15 +1144,18 @@ export function buildScriptModuleDependencyGraph(moduleDefs, registry) {
                 const rawTypeStr = parts.slice(1, -1).join(" ").trim();
                 const lowerType = rawTypeStr.toLowerCase();
 
-                if (lowerType === mDef.name.toLowerCase()) {
-                    graph.addDependency(mDef.name, mDef.name);
-                } else if (moduleMap.has(lowerType)) {
-                    const targetMDef = moduleMap.get(lowerType);
-                    graph.addDependency(mDef.name, targetMDef.name);
-                } else if (registry) {
-                    for (const existingDef of registry.definitions.values()) {
-                        if (existingDef.name.toLowerCase() === lowerType) {
-                            graph.addDependency(mDef.name, existingDef.name);
+                const isBuiltinGate = Object.keys(COMPONENT_REGISTRY).some(k => k.toLowerCase() === lowerType);
+                if (!isBuiltinGate) {
+                    if (lowerType === mDef.name.toLowerCase()) {
+                        graph.addDependency(mDef.name, mDef.name);
+                    } else if (moduleMap.has(lowerType)) {
+                        const targetMDef = moduleMap.get(lowerType);
+                        graph.addDependency(mDef.name, targetMDef.name);
+                    } else if (registry) {
+                        for (const existingDef of registry.definitions.values()) {
+                            if (existingDef.name.toLowerCase() === lowerType) {
+                                graph.addDependency(mDef.name, existingDef.name);
+                            }
                         }
                     }
                 }
@@ -1258,7 +1262,8 @@ export function compileModuleDefinition(moduleName, rawBodyText, startLine, regi
         // 3. Handle internal component addition & check recursive instantiation
         if (verb === "add") {
             const rawTypeStr = parts.slice(1, -1).join(" ").trim();
-            if (rawTypeStr.toLowerCase() === moduleName.toLowerCase()) {
+            const isBuiltinGate = Object.keys(COMPONENT_REGISTRY).some(k => k.toLowerCase() === rawTypeStr.toLowerCase());
+            if (!isBuiltinGate && rawTypeStr.toLowerCase() === moduleName.toLowerCase()) {
                 throw new Error(`Cannot compile module ${moduleName}.\nCircular module dependency: ${moduleName} → ${moduleName} (cannot instantiate module '${moduleName}' recursively)`);
             }
         }

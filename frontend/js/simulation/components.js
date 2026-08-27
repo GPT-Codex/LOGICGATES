@@ -1598,6 +1598,99 @@ export class RegisterGate extends Component {
     }
 }
 
+export class MUXGate extends Component {
+    constructor(id, x, y) {
+        super(id, "MUX", x, y);
+        this.width = 60;
+        this.height = 50;
+
+        // Inputs: A (0), B (1), SEL (2)
+        const inA = this.addInput(`${id}_inA`, "A");
+        inA.relX = -30;
+        inA.relY = -12;
+
+        const inB = this.addInput(`${id}_inB`, "B");
+        inB.relX = -30;
+        inB.relY = 12;
+
+        const inSEL = this.addInput(`${id}_inSEL`, "SEL");
+        inSEL.relX = 0;
+        inSEL.relY = 25;
+
+        // Output: Y
+        const outY = this.addOutput(`${id}_outY`, "Y");
+        outY.relX = 30;
+        outY.relY = 0;
+    }
+
+    evaluate() {
+        const aVal = this.inputs[0].value === 1 ? 1 : 0;
+        const bVal = this.inputs[1].value === 1 ? 1 : 0;
+        const selVal = this.inputs[2].value === 1 ? 1 : 0;
+
+        this.outputs[0].value = selVal === 1 ? bVal : aVal;
+    }
+
+    draw(ctx, isSelected) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
+
+        if (isSelected) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#f39c12";
+            ctx.strokeStyle = "#f39c12";
+            ctx.lineWidth = 2.5;
+        } else {
+            ctx.strokeStyle = "#e67e22";
+            ctx.lineWidth = 1.5;
+        }
+
+        ctx.fillStyle = "#3d2214";
+
+        // Draw classic trapezoidal MUX shape (wide left, narrow right)
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.beginPath();
+        const hw = this.width / 2;
+        const hLeft = this.height / 2;
+        const hRight = this.height / 2 - 10;
+
+        ctx.moveTo(-hw, -hLeft);
+        ctx.lineTo(hw, -hRight);
+        ctx.lineTo(hw, hRight);
+        ctx.lineTo(-hw, hLeft);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        // Pin labels
+        ctx.fillStyle = "#f39c12";
+        ctx.font = "bold 10px monospace";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText("A", -this.width / 2 + 6, -12);
+        ctx.fillText("B", -this.width / 2 + 6, 12);
+
+        ctx.textAlign = "center";
+        ctx.fillText("S", 0, this.height / 2 - 8);
+
+        ctx.textAlign = "right";
+        ctx.fillText("Y", this.width / 2 - 6, 0);
+
+        // Center Title
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(this.label || "MUX", 2, 0);
+
+        ctx.restore();
+
+        this.drawPins(ctx);
+    }
+}
+
 export const COMPONENT_REGISTRY = {
     "Input": InputGate,
     "Output": OutputGate,
@@ -1625,7 +1718,11 @@ export const COMPONENT_REGISTRY = {
     "register": RegisterGate,
     "Counter": CounterGate,
     "COUNTER": CounterGate,
-    "counter": CounterGate
+    "counter": CounterGate,
+    "MUX": MUXGate,
+    "mux": MUXGate,
+    "2:1 MUX": MUXGate,
+    "2:1 Multiplexer": MUXGate
 };
 
 /**

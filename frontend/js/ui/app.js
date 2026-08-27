@@ -14,6 +14,7 @@ import { SelectionManager, ClipboardManager, HistoryManager } from "../canvas/in
 import { openModal, closeModal } from "./modals.js";
 import { ScriptEditor } from "./script_editor.js";
 import { renderMarkdown } from "./markdown_renderer.js";
+import { initWhatsNewUI } from "./whats_new.js";
 
 // Global instances
 const circuit = new Circuit();
@@ -1180,6 +1181,8 @@ function triggerExportSimDialog(commandEngine) {
  * Hook up all buttons, modals, category toggles, and side inputs.
  */
 function setupUIEvents(commandEngine) {
+    initWhatsNewUI();
+
     // Categories collapse/toggle
     document.querySelectorAll(".category-header").forEach(header => {
         header.addEventListener("click", () => {

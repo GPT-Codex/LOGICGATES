@@ -331,6 +331,7 @@ Supported built-in component types:
 - `dff` / `DFF` (Edge-Triggered D Flip-Flop)
 - `register` / `REGISTER(width)` (Parameterized N-Bit Register)
 - `counter` / `COUNTER(width)` (Parameterized N-Bit Binary Up-Counter)
+- `mux` / `MUX` / `2:1 MUX` (2:1 Multiplexer)
 - `and` / `nand`
 - `or` / `nor`
 - `xor` / `xnor`
@@ -709,6 +710,45 @@ move REG8 to (300, 200)
 connect CLK.CLK -> REG8.CLK
 connect IN REG8.D
 connect REG8.Q OUT
+```
+
+### Built-in 2:1 Multiplexer (`mux`)
+The 2:1 Multiplexer routes input `A` or `B` to output `Y` based on select control `SEL`:
+- **Pins:** `A` (Input 0), `B` (Input 1), `SEL` (Input 2), `Y` (Output 0)
+- **Truth Table:**
+  - `SEL = 0` → `Y = A`
+  - `SEL = 1` → `Y = B`
+
+Example:
+```sim
+add input A
+add input B
+add input SEL
+add mux M0
+add output Y
+
+connect A -> M0.A
+connect B -> M0.B
+connect SEL -> M0.SEL
+connect M0.Y -> Y
+```
+
+### Parameterized Vector Multiplexer (`MUX(width)`)
+Imported from server library `lib/logic.sim`:
+```sim
+import "logic" as logic
+
+add input SEL
+bus A[0..7]
+bus B[0..7]
+bus Y[0..7]
+
+add logic.MUX(8) M8
+
+connect SEL -> M8.SEL
+connect A -> M8.A
+connect B -> M8.B
+connect M8.Y -> Y
 ```
 
 ### Built-in Parameterized Binary Up-Counter (`COUNTER`)

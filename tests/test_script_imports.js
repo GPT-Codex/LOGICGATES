@@ -491,8 +491,8 @@ async function runAllImportTests() {
 
         // 10c. Collision and Ambiguous Unqualified Reference Rejection
         const virtualCollisions = {
-            "lib1.sim": "module MUX {\n    input A\n    output Y\n    expr Y = A\n}",
-            "lib2.sim": "module MUX {\n    input A\n    output Y\n    expr Y = A\n}"
+            "lib1.sim": "module CUSTOM_GATE {\n    input A\n    output Y\n    expr Y = A\n}",
+            "lib2.sim": "module CUSTOM_GATE {\n    input A\n    output Y\n    expr Y = A\n}"
         };
         const fileResolverColl = async (path) => ({ INFO: "OK", DATA: virtualCollisions[path] || virtualCollisions[`${path}.sim`] });
 
@@ -500,21 +500,21 @@ async function runAllImportTests() {
         const scriptAmb = `
             import "lib1.sim" as l1
             import "lib2.sim" as l2
-            add MUX M0
+            add CUSTOM_GATE M0
         `;
         const resAmb = await cmdEngineAmb.executeScript(scriptAmb, { fileResolver: fileResolverColl, filePath: "main.sim" });
         assert.strictEqual(resAmb.success, false);
-        assert.ok(resAmb.error.includes("Ambiguous module 'MUX'"));
-        assert.ok(resAmb.error.includes("l1.MUX"));
-        assert.ok(resAmb.error.includes("l2.MUX"));
+        assert.ok(resAmb.error.includes("Ambiguous module 'CUSTOM_GATE'"));
+        assert.ok(resAmb.error.includes("l1.CUSTOM_GATE"));
+        assert.ok(resAmb.error.includes("l2.CUSTOM_GATE"));
 
         // 10d. Disambiguated Qualified Calls
         const { cmdEngine: cmdEngineDisamb, circuit: circuitDisamb } = createTestSetup();
         const scriptDisamb = `
             import "lib1.sim" as l1
             import "lib2.sim" as l2
-            add l1.MUX MUX_A
-            add l2.MUX MUX_B
+            add l1.CUSTOM_GATE MUX_A
+            add l2.CUSTOM_GATE MUX_B
         `;
         const resDisamb = await cmdEngineDisamb.executeScript(scriptDisamb, { fileResolver: fileResolverColl, filePath: "main.sim" });
         assert.strictEqual(resDisamb.success, true, resDisamb.error);
@@ -525,7 +525,7 @@ async function runAllImportTests() {
         const showRes = cmdEngineDisamb.execute("show import l1");
         assert.strictEqual(showRes.success, true);
         assert.ok(showRes.data.includes("Alias: l1"));
-        assert.ok(showRes.data.includes("Exported Modules:\n  - MUX"));
+        assert.ok(showRes.data.includes("Exported Modules:\n  - CUSTOM_GATE"));
 
         console.log("  ✓ Import aliases (syntax, qualified modules/constants, disambiguation, show import) passed");
     }
