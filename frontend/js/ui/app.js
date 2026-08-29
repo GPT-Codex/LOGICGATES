@@ -1284,6 +1284,10 @@ function setupUIEvents(commandEngine) {
         triggerImportLibrary();
     });
 
+    document.getElementById("btn-create-display").addEventListener("click", () => {
+        triggerCreateCompositeDisplay();
+    });
+
     // CUSTOM MODULE CREATION WORKFLOW
     const modal = document.getElementById("create-module-modal");
 
@@ -1445,6 +1449,360 @@ function setupUIEvents(commandEngine) {
         }
     });
     document.getElementById("ctx-detach-module").addEventListener("click", () => triggerDetachModuleInstance());
+}
+
+/**
+ * Composite Display creation and optional replacement workflow.
+ */
+async function triggerCreateCompositeDisplay() {
+    const selectedComps = Array.from(selectionManager.selectedComponents);
+    if (selectedComps.length === 0) {
+        alert("Please select display and circuit components on the canvas first!");
+        return;
+    }
+
+    // Sort in human reading order (top to bottom, left to right)
+    selectedComps.sort((a, b) => {
+        if (Math.abs(a.y - b.y) > 10) return a.y - b.y;
+        return a.x - b.x;
+    });
+
+    const compIds = new Set(selectedComps.map(c => c.id));
+
+    // Calculate bounding box of selection
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const c of selectedComps) {
+        const bbox = c.boundingBox();
+        minX = Math.min(minX, bbox.x);
+        maxX = Math.max(maxX, bbox.x + bbox.width);
+        minY = Math.min(minY, bbox.y);
+        maxY = Math.max(maxY, bbox.y + bbox.height);
+    }
+
+    const padding = 10;
+    minX -= padding;
+    maxX += padding;
+    minY -= padding;
+    maxY += padding;
+
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    // Identify external wires entering or leaving selection
+    const extWiresToInputs = [];
+    const extWiresFromOutputs = [];
+
+    for (const wire of circuit.wires.values()) {
+        const srcInSel = compIds.has(wire.fromPin.component.id);
+        const dstInSel = compIds.has(wire.toPin.component.id);
+
+        if (!srcInSel && dstInSel) {
+            extWiresToInputs.push(wire);
+        } else if (srcInSel && !dstInSel) {
+            extWiresFromOutputs.push(wire);
+        }
+    }
+
+    // Derive external input port names
+    const externalInputs = [];
+    const usedInputNames = new Set();
+    const inputWirePortMap = new Map(); // wire.id -> portName
+
+    // First include explicit Input gates in selection
+    for (const c of selectedComps) {
+        if (c.type === "Input") {
+            const name = c.label || c.id;
+            if (!usedInputNames.has(name)) {
+                usedInputNames.add(name);
+                externalInputs.push(name);
+            }
+        }
+    }
+
+    // Next derive from external input wires
+    for (const wire of extWiresToInputs) {
+        const dstComp = wire.toPin.component;
+        const dstPin = wire.toPin;
+
+        let baseName = dstPin.name;
+        if (dstComp.label) {
+            baseName = `${dstComp.label}_${dstPin.name}`;
+        } else if (dstComp.type === "Input") {
+            baseName = dstComp.label || dstComp.id;
+        }
+
+        let portName = baseName;
+        let suffix = 1;
+        while (usedInputNames.has(portName)) {
+            portName = `${baseName}_${suffix}`;
+            suffix++;
+        }
+
+        usedInputNames.add(portName);
+        externalInputs.push(portName);
+        inputWirePortMap.set(wire.id, portName);
+    }
+
+    // Derive external output port names
+    const externalOutputs = [];
+    const usedOutputNames = new Set();
+    const outputWirePortMap = new Map(); // wire.id -> portName
+
+    // Explicit Output gates
+    for (const c of selectedComps) {
+        if (c.type === "Output") {
+            const name = c.label || c.id;
+            if (!usedOutputNames.has(name)) {
+                usedOutputNames.add(name);
+                externalOutputs.push(name);
+            }
+        }
+    }
+
+    // Derived from external output wires
+    for (const wire of extWiresFromOutputs) {
+        const srcComp = wire.fromPin.component;
+        const srcPin = wire.fromPin;
+
+        let baseName = srcPin.name;
+        if (srcComp.label) {
+            baseName = `${srcComp.label}_${srcPin.name}`;
+        } else if (srcComp.type === "Output") {
+            baseName = srcComp.label || srcComp.id;
+        }
+
+        let portName = baseName;
+        let suffix = 1;
+        while (usedOutputNames.has(portName)) {
+            portName = `${baseName}_${suffix}`;
+            suffix++;
+        }
+
+        usedOutputNames.add(portName);
+        externalOutputs.push(portName);
+        outputWirePortMap.set(wire.id, portName);
+    }
+
+    // Open modal dialog for name
+    const html = `
+        <div class="form-group" style="margin-bottom: 15px;">
+            <label for="display-name-input">Display Custom Part Name *</label>
+            <input type="text" id="display-name-input" placeholder="e.g. MyDisplay" value="MyDisplay" style="width: 100%; padding: 8px 10px; font-size: 13px; background-color: #252525; border: 1px solid #3d3d3d; border-radius: 4px; color: #fff; outline: none;">
+        </div>
+        <div class="form-group" style="margin-bottom: 15px;">
+            <label for="display-desc-input">Description</label>
+            <textarea id="display-desc-input" placeholder="Composite display panel assembly..." style="width: 100%; padding: 8px 10px; font-size: 12px; background-color: #252525; border: 1px solid #3d3d3d; border-radius: 4px; color: #fff; outline: none; height: 50px;"></textarea>
+        </div>
+        <div style="background-color: #1a1a1a; padding: 10px; border-radius: 4px; margin-bottom: 15px; border: 1px solid #333;">
+            <p style="font-size: 12px; color: #00adb5; margin-bottom: 6px; font-weight: bold;">Exposed External Ports (${externalInputs.length} in, ${externalOutputs.length} out):</p>
+            <p style="font-size: 11px; color: #aaa; font-family: monospace;">Inputs: ${externalInputs.length > 0 ? externalInputs.join(", ") : "(none)"}</p>
+            <p style="font-size: 11px; color: #aaa; font-family: monospace;">Outputs: ${externalOutputs.length > 0 ? externalOutputs.join(", ") : "(none)"}</p>
+        </div>
+        <div class="form-group" style="margin-bottom: 20px;">
+            <label style="font-size: 13px; display: flex; align-items: center; gap: 8px; cursor: pointer; color: #ddd;">
+                <input type="checkbox" id="display-replace-checkbox" checked style="width: 16px; height: 16px;">
+                Replace selected components on canvas with the new composite display
+            </label>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" id="btn-display-cancel">Cancel</button>
+            <button class="btn btn-primary" id="btn-display-confirm">Create Display</button>
+        </div>
+    `;
+
+    openModal('<i class="fa-solid fa-tv"></i> Create Composite Display', html, () => {
+        const inputName = document.getElementById("display-name-input");
+        if (inputName) {
+            inputName.focus();
+            inputName.select();
+        }
+
+        document.getElementById("btn-display-cancel").onclick = closeModal;
+
+        document.getElementById("btn-display-confirm").onclick = async () => {
+            const rawName = inputName.value.trim();
+            if (!rawName) return;
+
+            const desc = document.getElementById("display-desc-input").value.trim();
+            const shouldReplace = document.getElementById("display-replace-checkbox").checked;
+
+            const cat = "Displays";
+            const type = "display";
+
+            // Duplicate check
+            const existingDef = findDefinitionByNameAndType(registry, rawName, type);
+            let finalName = rawName;
+            let modId = rawName.toLowerCase().replace(/\s+/g, "_") + "_" + Math.random().toString(36).substring(2, 6);
+            let choice = "new";
+
+            if (existingDef) {
+                choice = await promptDuplicateResolve(rawName, type);
+                if (choice === "replace") {
+                    modId = existingDef.id;
+                } else {
+                    finalName = getUniqueName(registry, rawName, type);
+                    modId = finalName.toLowerCase().replace(/\s+/g, "_") + "_" + Math.random().toString(36).substring(2, 6);
+                }
+            }
+
+            // Build inner components relative to centerX, centerY
+            const subComps = [];
+            for (const comp of selectedComps) {
+                subComps.push({
+                    id: comp.id,
+                    type: comp.type,
+                    x: comp.x - centerX,
+                    y: comp.y - centerY,
+                    label: comp.label || "",
+                    rotation: comp.rotation || 0,
+                    flipX: comp.flipX || false,
+                    flipY: comp.flipY || false,
+                    widthBits: comp.widthBits,
+                    ledColor: comp.ledColor,
+                    rgbaValue: comp.rgbaValue,
+                    buttonMode: comp.buttonMode,
+                    holdDuration: comp.holdDuration,
+                    definition: comp.type === "UserModule" ? comp.definition : null
+                });
+            }
+
+            // Build inner wires
+            const subWires = [];
+            for (const wire of circuit.wires.values()) {
+                if (compIds.has(wire.fromPin.component.id) && compIds.has(wire.toPin.component.id)) {
+                    subWires.push({
+                        id: wire.id,
+                        fromPin: wire.fromPin.id,
+                        toPin: wire.toPin.id,
+                        color: wire.color || null
+                    });
+                }
+            }
+
+            // Add synthetic inner port pass-through Input/Output gates for derived external wires
+            for (const wire of extWiresToInputs) {
+                const portName = inputWirePortMap.get(wire.id);
+                const dstComp = wire.toPin.component;
+                const dstPin = wire.toPin;
+
+                if (dstComp.type !== "Input") {
+                    const portInId = `in_${portName}`;
+                    if (!subComps.some(c => c.id === portInId)) {
+                        subComps.push({
+                            id: portInId,
+                            type: "Input",
+                            x: (dstComp.x - centerX) - 40,
+                            y: dstComp.y - centerY,
+                            label: portName
+                        });
+                        subWires.push({
+                            id: `wire_${portInId}`,
+                            fromPin: `${portInId}_out`,
+                            toPin: dstPin.id,
+                            color: null
+                        });
+                    }
+                }
+            }
+
+            for (const wire of extWiresFromOutputs) {
+                const portName = outputWirePortMap.get(wire.id);
+                const srcComp = wire.fromPin.component;
+                const srcPin = wire.fromPin;
+
+                if (srcComp.type !== "Output") {
+                    const portOutId = `out_${portName}`;
+                    if (!subComps.some(c => c.id === portOutId)) {
+                        subComps.push({
+                            id: portOutId,
+                            type: "Output",
+                            x: (srcComp.x - centerX) + 40,
+                            y: srcComp.y - centerY,
+                            label: portName
+                        });
+                        subWires.push({
+                            id: `wire_${portOutId}`,
+                            fromPin: srcPin.id,
+                            toPin: `${portOutId}_in`,
+                            color: null
+                        });
+                    }
+                }
+            }
+
+            const newDef = new ModuleDefinition(
+                modId,
+                finalName,
+                desc || `Composite display ${finalName}`,
+                cat,
+                externalInputs,
+                externalOutputs,
+                subComps,
+                subWires,
+                "display",
+                type,
+                [], [], null,
+                { width, height }
+            );
+
+            registry.register(newDef);
+            await saveModuleToBackend(newDef);
+
+            if (shouldReplace) {
+                // Perform replacement and wire remapping
+                const remappingInputs = extWiresToInputs.map(w => ({
+                    fromPin: w.fromPin,
+                    portName: inputWirePortMap.get(w.id)
+                }));
+                const remappingOutputs = extWiresFromOutputs.map(w => ({
+                    toPin: w.toPin,
+                    portName: outputWirePortMap.get(w.id)
+                }));
+
+                // Delete selected components from circuit
+                for (const c of selectedComps) {
+                    circuit.removeComponent(c.id);
+                }
+
+                // Place new composite display component
+                const dispId = `${finalName.toLowerCase().replace(/\s+/g, "_")}_${Math.random().toString(36).substring(2, 7)}`;
+                const dispComp = new UserModule(dispId, newDef, centerX, centerY, registry);
+                circuit.addComponent(dispComp);
+
+                // Reconnect external input wires
+                for (const rem of remappingInputs) {
+                    const extPin = dispComp.inputs.find(p => p.name === rem.portName);
+                    if (extPin) {
+                        const wireId = `wire_${Math.random().toString(36).substring(2, 9)}`;
+                        const newWire = new Wire(wireId, rem.fromPin, extPin);
+                        circuit.addWire(newWire);
+                    }
+                }
+
+                // Reconnect external output wires
+                for (const rem of remappingOutputs) {
+                    const extPin = dispComp.outputs.find(p => p.name === rem.portName);
+                    if (extPin) {
+                        const wireId = `wire_${Math.random().toString(36).substring(2, 9)}`;
+                        const newWire = new Wire(wireId, extPin, rem.toPin);
+                        circuit.addWire(newWire);
+                    }
+                }
+
+                selectionManager.clear();
+                selectionManager.selectSingleComponent(dispComp);
+            }
+
+            rebuildCustomModulesList();
+            engine.evaluateAll();
+            saveHistoryState();
+            updatePropertiesPanel();
+            updateStatusBar();
+            closeModal();
+        };
+    });
 }
 
 function promptDuplicateResolve(name, type) {

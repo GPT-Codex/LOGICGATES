@@ -20,7 +20,7 @@ export class ModuleDefinition {
      * @param {string} type
      * @param {string[]} dependencies - array of child module names/IDs
      */
-    constructor(id, name, description, category, inputs, outputs, components, wires, moduleType = "Module", type = null, dependencies = [], params = [], paramValues = null) {
+    constructor(id, name, description, category, inputs, outputs, components, wires, moduleType = "Module", type = null, dependencies = [], params = [], paramValues = null, bbox = null) {
         this.id = id;
         this.name = name;
         this.description = description;
@@ -35,6 +35,7 @@ export class ModuleDefinition {
         this.params = params || [];                 // e.g. ["width"]
         this.paramValues = paramValues || null;      // e.g. { width: 16 }
         this.specializations = new Map();           // paramKey -> ModuleDefinition
+        this.bbox = bbox || null;                   // { width, height }
     }
 }
 
@@ -170,10 +171,15 @@ export class UserModule extends Component {
         this.paramValues = definition.paramValues || null;
         this.type = "UserModule";
 
-        // Calculate dynamic dimensions based on pin count
-        const pinCount = Math.max(definition.inputs.length, definition.outputs.length);
-        this.width = 100;
-        this.height = Math.max(60, pinCount * 22 + 20);
+        // Calculate dynamic dimensions based on definition bounding box or pin count
+        if (definition.bbox && definition.bbox.width && definition.bbox.height) {
+            this.width = Math.max(40, definition.bbox.width);
+            this.height = Math.max(40, definition.bbox.height);
+        } else {
+            const pinCount = Math.max(definition.inputs.length, definition.outputs.length);
+            this.width = 100;
+            this.height = Math.max(60, pinCount * 22 + 20);
+        }
 
         // Sort inputs and outputs using natural numeric comparison for indexed pin names
         const sortedInputs = [...definition.inputs].sort(naturalCompare);
@@ -340,6 +346,107 @@ export class UserModule extends Component {
      * Drawing the custom user module on canvas with pin labels inside.
      */
     draw(ctx, isSelected) {
+        const isDisplay = this.definition && (
+            (this.definition.type && this.definition.type.toLowerCase() === "display") ||
+            (this.definition.category && this.definition.category.toLowerCase() === "displays") ||
+            (this.definition.moduleType && this.definition.moduleType.toLowerCase() === "display")
+        );
+
+        if (isDisplay) {
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate((this.rotation * Math.PI) / 180);
+
+            if (isSelected) {
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = "#00adb5";
+                ctx.strokeStyle = "#00adb5";
+                ctx.lineWidth = 2.5;
+            } else {
+                ctx.strokeStyle = "#333333";
+                ctx.lineWidth = 1.8;
+            }
+
+            ctx.fillStyle = "#111111"; // Dark panel background
+            ctx.beginPath();
+            ctx.save();
+            ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+            ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 8);
+            ctx.fill();
+            ctx.stroke();
+
+            // Render embedded display components inside composite panel
+            for (const innerComp of this.innerCircuit.components.values()) {
+                if (innerComp.type === "Input" || innerComp.type === "Output") {
+                    continue; // Skip external port pass-through gates
+                }
+
+                ctx.save();
+                ctx.translate(innerComp.x, innerComp.y);
+                ctx.rotate((innerComp.rotation * Math.PI) / 180);
+
+                // Suppress drawing inner component pins
+                const origDrawPins = innerComp.drawPins;
+                innerComp.drawPins = () => {};
+
+                innerComp.draw(ctx, false);
+
+                innerComp.drawPins = origDrawPins;
+                ctx.restore();
+            }
+
+            ctx.restore(); // Restore flip matrix
+            ctx.restore(); // Restore translate/rotate matrix
+
+            // Draw outer pins
+            this.drawPins(ctx);
+
+            // Draw pin text labels inside container edge
+            ctx.save();
+            ctx.fillStyle = "#888888";
+            ctx.font = "8px monospace";
+            ctx.textBaseline = "middle";
+
+            this.pins().forEach(pin => {
+                const side = pin.side || "left";
+                const rx = this.flipX ? -pin.relX : pin.relX;
+                const ry = this.flipY ? -pin.relY : pin.relY;
+
+                let visualSide = side;
+                if (this.flipX) {
+                    if (side === "left") visualSide = "right";
+                    else if (side === "right") visualSide = "left";
+                }
+                if (this.flipY) {
+                    if (side === "top") visualSide = "bottom";
+                    else if (side === "bottom") visualSide = "top";
+                }
+
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate((this.rotation * Math.PI) / 180);
+
+                if (visualSide === "left") {
+                    ctx.textAlign = "left";
+                    ctx.fillText(pin.name, rx + 6, ry);
+                } else if (visualSide === "right") {
+                    ctx.textAlign = "right";
+                    ctx.fillText(pin.name, rx - 6, ry);
+                } else if (visualSide === "top") {
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "top";
+                    ctx.fillText(pin.name, rx, ry + 6);
+                } else if (visualSide === "bottom") {
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "bottom";
+                    ctx.fillText(pin.name, rx, ry - 6);
+                }
+                ctx.restore();
+            });
+            ctx.restore();
+            return;
+        }
+
         ctx.save();
         let borderCol = "#8e44ad";
         let bgCol = "#2b1b3d";

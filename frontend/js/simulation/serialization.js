@@ -123,7 +123,8 @@ export function serializeCircuit(circuit, registry) {
                 params: def.params || [],
                 paramValues: def.paramValues || null,
                 rawBodyText: def.rawBodyText || "",
-                startLine: def.startLine || 1
+                startLine: def.startLine || 1,
+                bbox: def.bbox || null
             });
         }
     }
@@ -177,7 +178,8 @@ export function deserializeCircuit(data, circuit, registry) {
                 defType,
                 defData.dependencies || [],
                 defData.params || [],
-                defData.paramValues || null
+                defData.paramValues || null,
+                defData.bbox || null
             );
             def.rawBodyText = defData.rawBodyText || "";
             def.startLine = defData.startLine || 1;
