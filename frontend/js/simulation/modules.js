@@ -381,18 +381,13 @@ export class UserModule extends Component {
                     continue; // Skip external port pass-through gates
                 }
 
-                ctx.save();
-                ctx.translate(innerComp.x, innerComp.y);
-                ctx.rotate((innerComp.rotation * Math.PI) / 180);
-
-                // Suppress drawing inner component pins
+                // Suppress drawing inner component pins on panel face
                 const origDrawPins = innerComp.drawPins;
                 innerComp.drawPins = () => {};
 
                 innerComp.draw(ctx, false);
 
                 innerComp.drawPins = origDrawPins;
-                ctx.restore();
             }
 
             ctx.restore(); // Restore flip matrix

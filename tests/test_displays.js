@@ -104,6 +104,114 @@ async function runTests() {
     const d1Comp = circuit.components.get("D1");
     assert.strictEqual(d1Comp.width, 220);
 
+    // --- Regression Test: Four Seven-Segment Composite Display ---
+    console.log("Running Four Seven-Segment Composite Display regression test...");
+
+    // Create 4 Seven-Segment Displays placed horizontally
+    const segA = createComponent("7-Segment Display", "segA", 100, 200);
+    const segB = createComponent("7-Segment Display", "segB", 220, 200);
+    const segC = createComponent("7-Segment Display", "segC", 340, 200);
+    const segD = createComponent("7-Segment Display", "segD", 460, 200);
+
+    const origComps = [segA, segB, segC, segD];
+
+    // Calculate bounding box
+    let rMinX = Infinity, rMaxX = -Infinity, rMinY = Infinity, rMaxY = -Infinity;
+    for (const c of origComps) {
+        const bbox = c.boundingBox();
+        rMinX = Math.min(rMinX, bbox.x);
+        rMaxX = Math.max(rMaxX, bbox.x + bbox.width);
+        rMinY = Math.min(rMinY, bbox.y);
+        rMaxY = Math.max(rMaxY, bbox.y + bbox.height);
+    }
+    const rPadding = 10;
+    rMinX -= rPadding; rMaxX += rPadding; rMinY -= rPadding; rMaxY += rPadding;
+    const expWidth = rMaxX - rMinX;
+    const expHeight = rMaxY - rMinY;
+    const rCenterX = (rMinX + rMaxX) / 2;
+    const rCenterY = (rMinY + rMaxY) / 2;
+
+    // Create inner components with relative coordinates
+    const quadSubComps = origComps.map(c => ({
+        id: c.id,
+        type: c.type,
+        x: c.x - rCenterX,
+        y: c.y - rCenterY,
+        label: c.id
+    }));
+
+    // Add pass-through Input gates for segA segment inputs 'a'..'g'
+    const segAPins = ["a", "b", "c", "d", "e", "f", "g", "dp"];
+    const quadSubWires = [];
+    const quadInputs = [];
+
+    segAPins.forEach(pName => {
+        const portName = `segA_${pName}`;
+        quadInputs.push(portName);
+        quadSubComps.push({
+            id: `in_${portName}`,
+            type: "Input",
+            x: (segA.x - rCenterX) - 40,
+            y: segA.y - rCenterY,
+            label: portName
+        });
+        quadSubWires.push({
+            id: `wire_${portName}`,
+            fromPin: `in_${portName}_out`,
+            toPin: `segA_in_${pName.toUpperCase()}`
+        });
+    });
+
+    const quadDef = new ModuleDefinition(
+        "quad_7seg_display",
+        "Quad7SegDisplay",
+        "Composite display containing four Seven-Segment Displays",
+        "Displays",
+        quadInputs,
+        [],
+        quadSubComps,
+        quadSubWires,
+        "display",
+        "display",
+        [], [], null,
+        { width: expWidth, height: expHeight }
+    );
+
+    registry.register(quadDef);
+
+    const quadCircuit = new Circuit();
+    const quadEngine = new SimulationEngine(quadCircuit);
+
+    const quadComp = new UserModule("quad1", quadDef, 300, 300, registry);
+    quadCircuit.addComponent(quadComp);
+
+    // Verify 1: Display custom part recognition
+    const isQuadDisplay = quadComp.definition && quadComp.definition.type === "display";
+    assert.strictEqual(isQuadDisplay, true, "Quad composite display must be recognized as type = 'display'");
+
+    // Verify 2: Geometry and dimensions
+    assert.strictEqual(quadComp.width, expWidth, "Composite bounds must match original group bounds width");
+    assert.strictEqual(quadComp.height, expHeight, "Composite bounds must match original group bounds height");
+
+    // Verify 3: Contains 4 seven-segment children in innerCircuit
+    const innerDisplays = Array.from(quadComp.innerCircuit.components.values()).filter(c => c.type === "7-Segment Display");
+    assert.strictEqual(innerDisplays.length, 4, "Composite must contain 4 seven-segment display children");
+
+    // Verify 4: Relative positions preserved
+    const innerSegA = quadComp.innerCircuit.components.get("segA");
+    assert.strictEqual(innerSegA.x, segA.x - rCenterX, "segA relative X position must be preserved");
+    assert.strictEqual(innerSegA.y, segA.y - rCenterY, "segA relative Y position must be preserved");
+
+    // Verify 5: Driving external input updates internal seven-segment input in real time
+    const extSegA_a = quadComp.inputs.find(p => p.name === "segA_a");
+    assert(extSegA_a, "External pin 'segA_a' must exist");
+
+    extSegA_a.value = 1;
+    quadComp.evaluate();
+
+    assert.strictEqual(innerSegA.inputs[0].value, 1, "Internal Seven-Segment A segment 'a' must receive external signal 1");
+
+    console.log("Four Seven-Segment Composite Display regression test passed successfully!");
     console.log("Display components tests passed successfully!");
 }
 
