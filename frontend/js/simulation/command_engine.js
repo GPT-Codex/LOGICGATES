@@ -46,6 +46,10 @@ export class CommandEngine {
         this.typeMap["npn"] = "NPN Transistor";
         this.typeMap["pnp"] = "PNP Transistor";
         this.typeMap["led"] = "LED";
+        this.typeMap["decoder"] = "Decoder";
+        this.typeMap["priority_encoder"] = "Priority Encoder";
+        this.typeMap["priority encoder"] = "Priority Encoder";
+        this.typeMap["comparator"] = "Comparator";
     }
 
     /**
@@ -1666,7 +1670,10 @@ export class CommandEngine {
             "10-Segment Display": "10-segment display",
             "Button": "button",
             "NPN Transistor": "npn",
-            "PNP Transistor": "pnp"
+            "PNP Transistor": "pnp",
+            "Decoder": "decoder",
+            "Priority Encoder": "priority_encoder",
+            "Comparator": "comparator"
         };
 
         const inputGateNames = new Set(def.inputs);

@@ -332,6 +332,9 @@ Supported built-in component types:
 - `register` / `REGISTER(width)` (Parameterized N-Bit Register)
 - `counter` / `COUNTER(width)` (Parameterized N-Bit Binary Up-Counter)
 - `mux` / `MUX` / `2:1 MUX` (2:1 Multiplexer)
+- `decoder` / `DECODER(bits)` (2-to-4 up to N-to-$2^N$ Decoder)
+- `priority_encoder` / `PRIORITY_ENCODER(inputs)` (4-to-2 up to N-to-$\log_2 N$ Priority Encoder)
+- `comparator` / `COMPARATOR(width)` (1 to 16-Bit Digital Magnitude Comparator)
 - `and` / `nand`
 - `or` / `nor`
 - `xor` / `xnor`
@@ -773,6 +776,65 @@ bus COUNT_VAL[0..7]
 
 connect CLK.CLK -> COUNT8.CLK
 connect COUNT8.Q COUNT_VAL
+```
+
+---
+
+## 10.1 Combinational Logic Primitives (`decoder`, `priority_encoder`, `comparator`)
+
+### N-to-$2^N$ Decoder (`decoder`)
+- **Syntax:** `add DECODER(bits) NAME` or `add decoder NAME` (defaults to 2 bits, 2-to-4 decoder).
+- **Pins:**
+  - `A[0..bits-1]` (Inputs): Address select lines
+  - `EN` (Input): Enable line (active HIGH, default 1 if unconnected)
+  - `Y0`..`Y(2^bits-1)` or `Y[0..2^bits-1]` (Outputs): One-hot decoded active output lines
+- **Behavior:** When `EN = 1`, output line `Y[A]` is HIGH (1) and all other outputs are LOW (0). When `EN = 0`, all outputs are 0.
+
+Example:
+```sim
+add DECODER(2) DEC
+add input A0
+add input A1
+connect A0 DEC.A[0]
+connect A1 DEC.A[1]
+```
+
+### Priority Encoder (`priority_encoder`)
+- **Syntax:** `add PRIORITY_ENCODER(inputs) NAME` or `add priority_encoder NAME` (defaults to 4 inputs).
+- **Pins:**
+  - `I0`..`I(inputs-1)` or `I[0..inputs-1]` (Inputs): Data input lines
+  - `A`, `B` (or `Y[0..log2(inputs)-1]`) (Outputs): Binary encoded output index
+  - `VALID` (Output): High when at least one input line is active (1)
+- **Behavior:** Encodes the highest-numbered active input index into binary. If no input is active, `VALID = 0` and encoded output lines are deterministically 0.
+
+Example:
+```sim
+add PRIORITY_ENCODER(4) ENC
+add input I0
+add input I3
+connect I0 ENC.I0
+connect I3 ENC.I3
+# Encodes I3 (highest index 3) -> Y = 3 (A=1, B=1), VALID = 1
+```
+
+### Digital Magnitude Comparator (`comparator`)
+- **Syntax:** `add COMPARATOR(width) NAME` or `add comparator NAME` (defaults to 4 bits).
+- **Pins:**
+  - `A[0..width-1]` (Inputs): First unsigned binary vector
+  - `B[0..width-1]` (Inputs): Second unsigned binary vector
+  - `EQ` (Output): Active HIGH when $A == B$
+  - `GT` (Output): Active HIGH when $A > B$
+  - `LT` (Output): Active HIGH when $A < B$
+- **Behavior:** Performs bitwise magnitude comparison from MSB to LSB. Exactly one output line (`EQ`, `GT`, or `LT`) is HIGH at any time.
+
+Example:
+```sim
+add COMPARATOR(8) COMP8
+bus A[0..7]
+bus B[0..7]
+
+connect A COMP8.A
+connect B COMP8.B
 ```
 
 ---

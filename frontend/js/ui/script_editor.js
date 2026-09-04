@@ -31,14 +31,17 @@ const COMMANDS = new Set([
 const COMP_TYPES = new Set([
   "input", "output", "clock", "and", "or", "xor", "not", "nand", "nor",
   "xnor", "buffer", "button", "npn", "pnp", "led", "dff", "register", "counter", "mux",
+  "decoder", "priority_encoder", "comparator"
 ]);
 
 /** Multi-word component types, matched before single words. */
 const MULTIWORD_TYPES = [
   "7-segment display",
+  "4-digit 7-segment display",
   "10-segment display",
   "constant high",
   "constant low",
+  "priority encoder"
 ];
 
 const LOGIC_OPS = new Set(["and", "or", "xor", "not", "nand", "nor", "xnor"]);

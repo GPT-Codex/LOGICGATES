@@ -385,7 +385,13 @@ export class UserModule extends Component {
                 const origDrawPins = innerComp.drawPins;
                 innerComp.drawPins = () => {};
 
-                innerComp.draw(ctx, false);
+                ctx.save();
+                ctx.shadowBlur = 0;
+                ctx.shadowColor = "transparent";
+
+                innerComp.draw(ctx, false, { hidePinLabels: true });
+
+                ctx.restore();
 
                 innerComp.drawPins = origDrawPins;
             }

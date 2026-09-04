@@ -843,7 +843,7 @@ export class FourDigitSevenSegmentGate extends Component {
         // Render only
     }
 
-    draw(ctx, isSelected) {
+    draw(ctx, isSelected, options = {}) {
         ctx.save();
         ctx.translate(this.x, this.y);
         ctx.rotate((this.rotation * Math.PI) / 180);
@@ -901,16 +901,18 @@ export class FourDigitSevenSegmentGate extends Component {
             ctx.fill();
         });
 
-        // Draw pin labels above bottom pins
-        ctx.fillStyle = "#888888";
-        ctx.font = "bold 7px monospace";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "bottom";
-        this.inputs.forEach((pin) => {
-            const rx = this.flipX ? -pin.relX : pin.relX;
-            const ry = this.flipY ? -pin.relY : pin.relY;
-            ctx.fillText(pin.name, rx, ry - 4);
-        });
+        // Draw pin labels above bottom pins if not suppressed by composite display
+        if (!options.hidePinLabels) {
+            ctx.fillStyle = "#888888";
+            ctx.font = "bold 7px monospace";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "bottom";
+            this.inputs.forEach((pin) => {
+                const rx = this.flipX ? -pin.relX : pin.relX;
+                const ry = this.flipY ? -pin.relY : pin.relY;
+                ctx.fillText(pin.name, rx, ry - 4);
+            });
+        }
 
         ctx.restore();
 
@@ -941,7 +943,7 @@ export class SevenSegmentGate extends Component {
         // Render only
     }
 
-    draw(ctx, isSelected) {
+    draw(ctx, isSelected, options = {}) {
         ctx.save();
         ctx.translate(this.x, this.y);
         ctx.rotate((this.rotation * Math.PI) / 180);
@@ -991,16 +993,18 @@ export class SevenSegmentGate extends Component {
         ctx.arc(16, 22, 2.5, 0, 2 * Math.PI);
         ctx.fill();
 
-        // Draw pin labels above bottom pins
-        ctx.fillStyle = "#888888";
-        ctx.font = "bold 8px monospace";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "bottom";
-        this.inputs.forEach((pin) => {
-            const rx = this.flipX ? -pin.relX : pin.relX;
-            const ry = this.flipY ? -pin.relY : pin.relY;
-            ctx.fillText(pin.name, rx, ry - 5);
-        });
+        // Draw pin labels above bottom pins if not suppressed by composite display
+        if (!options.hidePinLabels) {
+            ctx.fillStyle = "#888888";
+            ctx.font = "bold 8px monospace";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "bottom";
+            this.inputs.forEach((pin) => {
+                const rx = this.flipX ? -pin.relX : pin.relX;
+                const ry = this.flipY ? -pin.relY : pin.relY;
+                ctx.fillText(pin.name, rx, ry - 5);
+            });
+        }
 
         ctx.restore();
 
@@ -1788,6 +1792,408 @@ export class RegisterGate extends Component {
     }
 }
 
+export class ComparatorGate extends Component {
+    constructor(id, x, y, widthBits = 4) {
+        super(id, "Comparator", x, y);
+        this.widthBits = Math.max(1, Math.min(16, widthBits));
+        this.rebuildComparatorPins();
+    }
+
+    rebuildComparatorPins() {
+        this.inputs = [];
+        this.outputs = [];
+
+        const totalRows = Math.max(this.widthBits * 2, 3);
+        this.width = 110;
+        this.height = Math.max(60, totalRows * 18 + 20);
+
+        // Inputs: A[0..N-1] and B[0..N-1]
+        for (let i = 0; i < this.widthBits; i++) {
+            const pinName = this.widthBits === 1 ? "A" : `A[${i}]`;
+            const pin = this.addInput(`${this.id}_in_A${i}`, pinName);
+            pin.relX = -this.width / 2;
+            pin.relY = -this.height / 2 + 18 + i * 18;
+        }
+
+        for (let i = 0; i < this.widthBits; i++) {
+            const pinName = this.widthBits === 1 ? "B" : `B[${i}]`;
+            const pin = this.addInput(`${this.id}_in_B${i}`, pinName);
+            pin.relX = -this.width / 2;
+            pin.relY = -this.height / 2 + 18 + (this.widthBits + i) * 18;
+        }
+
+        // Outputs: EQ, GT, LT
+        const eqPin = this.addOutput(`${this.id}_out_EQ`, "EQ");
+        eqPin.relX = this.width / 2;
+        eqPin.relY = -18;
+        eqPin.value = 1; // Default A=0, B=0 -> EQ=1
+
+        const gtPin = this.addOutput(`${this.id}_out_GT`, "GT");
+        gtPin.relX = this.width / 2;
+        gtPin.relY = 0;
+        gtPin.value = 0;
+
+        const ltPin = this.addOutput(`${this.id}_out_LT`, "LT");
+        ltPin.relX = this.width / 2;
+        ltPin.relY = 18;
+        ltPin.value = 0;
+    }
+
+    setWidth(newWidth) {
+        const w = Math.max(1, Math.min(16, parseInt(newWidth) || 4));
+        if (w !== this.widthBits) {
+            this.widthBits = w;
+            this.rebuildComparatorPins();
+            this.evaluate();
+        }
+    }
+
+    evaluate() {
+        // Compare bits from MSB (widthBits - 1) down to LSB (0)
+        let result = "EQ"; // "EQ", "GT", or "LT"
+
+        for (let i = this.widthBits - 1; i >= 0; i--) {
+            const aVal = this.inputs[i] ? (this.inputs[i].value === 1 ? 1 : 0) : 0;
+            const bVal = this.inputs[this.widthBits + i] ? (this.inputs[this.widthBits + i].value === 1 ? 1 : 0) : 0;
+
+            if (aVal > bVal) {
+                result = "GT";
+                break;
+            } else if (aVal < bVal) {
+                result = "LT";
+                break;
+            }
+        }
+
+        if (this.outputs[0]) this.outputs[0].value = (result === "EQ") ? 1 : 0;
+        if (this.outputs[1]) this.outputs[1].value = (result === "GT") ? 1 : 0;
+        if (this.outputs[2]) this.outputs[2].value = (result === "LT") ? 1 : 0;
+    }
+
+    draw(ctx, isSelected) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
+
+        if (isSelected) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#00adb5";
+            ctx.strokeStyle = "#00adb5";
+            ctx.lineWidth = 2.5;
+        } else {
+            ctx.strokeStyle = "#4e4e4e";
+            ctx.lineWidth = 1.5;
+        }
+
+        ctx.fillStyle = "#1e293b";
+        ctx.beginPath();
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 6);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        // Title
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(this.label || `CMP(${this.widthBits})`, 0, 0);
+
+        // Draw pin labels inside box
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "bold 9px monospace";
+        ctx.textBaseline = "middle";
+
+        this.inputs.forEach(pin => {
+            const rx = this.flipX ? -pin.relX : pin.relX;
+            const ry = this.flipY ? -pin.relY : pin.relY;
+            ctx.textAlign = "left";
+            ctx.fillText(pin.name, rx + 8, ry);
+        });
+
+        this.outputs.forEach(pin => {
+            const rx = this.flipX ? -pin.relX : pin.relX;
+            const ry = this.flipY ? -pin.relY : pin.relY;
+            ctx.textAlign = "right";
+            ctx.fillText(pin.name, rx - 6, ry);
+        });
+
+        ctx.restore();
+
+        this.drawPins(ctx);
+    }
+}
+
+export class PriorityEncoderGate extends Component {
+    constructor(id, x, y, numInputs = 4) {
+        super(id, "Priority Encoder", x, y);
+        this.numInputs = Math.max(2, Math.min(16, numInputs));
+        this.rebuildEncoderPins();
+    }
+
+    rebuildEncoderPins() {
+        this.inputs = [];
+        this.outputs = [];
+
+        const numSelectBits = Math.ceil(Math.log2(this.numInputs));
+        const totalRows = Math.max(this.numInputs, numSelectBits + 1);
+        this.width = 110;
+        this.height = Math.max(60, totalRows * 20 + 20);
+
+        // Inputs: I0..I{N-1} (or I[0..N-1])
+        for (let i = 0; i < this.numInputs; i++) {
+            const pinName = this.numInputs === 4 ? `I${i}` : `I[${i}]`;
+            const pin = this.addInput(`${this.id}_in_I${i}`, pinName);
+            pin.relX = -this.width / 2;
+            pin.relY = -this.height / 2 + 20 + i * 20;
+        }
+
+        // Outputs: A, B (or Y[0..M-1])
+        for (let j = 0; j < numSelectBits; j++) {
+            const pinName = numSelectBits === 2 ? (j === 0 ? "A" : "B") : `Y[${j}]`;
+            const pin = this.addOutput(`${this.id}_out_Y${j}`, pinName);
+            pin.relX = this.width / 2;
+            pin.relY = -this.height / 2 + 20 + j * 20;
+            pin.value = 0;
+        }
+
+        // Output: VALID
+        const validPin = this.addOutput(`${this.id}_out_VALID`, "VALID");
+        validPin.relX = this.width / 2;
+        validPin.relY = this.height / 2 - 15;
+        validPin.value = 0;
+    }
+
+    setWidth(newWidth) {
+        const w = Math.max(2, Math.min(16, parseInt(newWidth) || 4));
+        if (w !== this.numInputs) {
+            this.numInputs = w;
+            this.rebuildEncoderPins();
+            this.evaluate();
+        }
+    }
+
+    evaluate() {
+        const numSelectBits = Math.ceil(Math.log2(this.numInputs));
+        let highestActive = -1;
+
+        // Scan from highest input index down to 0
+        for (let i = this.numInputs - 1; i >= 0; i--) {
+            if (this.inputs[i] && this.inputs[i].value === 1) {
+                highestActive = i;
+                break;
+            }
+        }
+
+        const validPin = this.outputs[numSelectBits]; // Last output pin
+
+        if (highestActive === -1) {
+            for (let j = 0; j < numSelectBits; j++) {
+                if (this.outputs[j]) this.outputs[j].value = 0;
+            }
+            if (validPin) validPin.value = 0;
+        } else {
+            for (let j = 0; j < numSelectBits; j++) {
+                if (this.outputs[j]) {
+                    this.outputs[j].value = (highestActive >> j) & 1;
+                }
+            }
+            if (validPin) validPin.value = 1;
+        }
+    }
+
+    draw(ctx, isSelected) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
+
+        if (isSelected) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#00adb5";
+            ctx.strokeStyle = "#00adb5";
+            ctx.lineWidth = 2.5;
+        } else {
+            ctx.strokeStyle = "#4e4e4e";
+            ctx.lineWidth = 1.5;
+        }
+
+        ctx.fillStyle = "#1e293b";
+        ctx.beginPath();
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 6);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        // Title
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(this.label || `PRI_ENC(${this.numInputs})`, 0, 0);
+
+        // Draw pin labels inside box
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "bold 9px monospace";
+        ctx.textBaseline = "middle";
+
+        this.inputs.forEach(pin => {
+            const rx = this.flipX ? -pin.relX : pin.relX;
+            const ry = this.flipY ? -pin.relY : pin.relY;
+            ctx.textAlign = "left";
+            ctx.fillText(pin.name, rx + 8, ry);
+        });
+
+        this.outputs.forEach(pin => {
+            const rx = this.flipX ? -pin.relX : pin.relX;
+            const ry = this.flipY ? -pin.relY : pin.relY;
+            ctx.textAlign = "right";
+            ctx.fillText(pin.name, rx - 6, ry);
+        });
+
+        ctx.restore();
+
+        this.drawPins(ctx);
+    }
+}
+
+export class DecoderGate extends Component {
+    constructor(id, x, y, widthBits = 2) {
+        super(id, "Decoder", x, y);
+        this.widthBits = Math.max(1, Math.min(4, widthBits));
+        this.rebuildDecoderPins();
+    }
+
+    rebuildDecoderPins() {
+        this.inputs = [];
+        this.outputs = [];
+
+        const outputCount = Math.pow(2, this.widthBits);
+        const totalRows = Math.max(outputCount, this.widthBits + 1);
+        this.width = 100;
+        this.height = Math.max(60, totalRows * 20 + 20);
+
+        // Address Inputs: A[0..N-1] (or A, B if widthBits == 2)
+        for (let i = 0; i < this.widthBits; i++) {
+            const pinName = this.widthBits === 2 ? (i === 0 ? "A" : "B") : `A[${i}]`;
+            const pin = this.addInput(`${this.id}_in_A${i}`, pinName);
+            pin.relX = -this.width / 2;
+            pin.relY = -this.height / 2 + 20 + i * 20;
+        }
+
+        // Enable Input: EN
+        const enPin = this.addInput(`${this.id}_in_EN`, "EN");
+        enPin.relX = -this.width / 2;
+        enPin.relY = this.height / 2 - 15;
+        enPin.value = 1; // Default EN HIGH when un-driven
+
+        // Outputs: Y0..Y{M-1} (or Y[0..M-1])
+        for (let j = 0; j < outputCount; j++) {
+            const pinName = this.widthBits === 2 ? `Y${j}` : `Y[${j}]`;
+            const pin = this.addOutput(`${this.id}_out_Y${j}`, pinName);
+            pin.relX = this.width / 2;
+            pin.relY = -this.height / 2 + 20 + j * 20;
+            pin.value = 0;
+        }
+    }
+
+    setWidth(newWidth) {
+        const w = Math.max(1, Math.min(4, parseInt(newWidth) || 2));
+        if (w !== this.widthBits) {
+            this.widthBits = w;
+            this.rebuildDecoderPins();
+            this.evaluate();
+        }
+    }
+
+    evaluate() {
+        // Last input is EN
+        const enPin = this.inputs[this.inputs.length - 1];
+        const enVal = enPin ? (enPin.value !== undefined ? enPin.value : 1) : 1;
+
+        const outputCount = Math.pow(2, this.widthBits);
+
+        if (enVal === 0) {
+            for (let j = 0; j < outputCount; j++) {
+                if (this.outputs[j]) this.outputs[j].value = 0;
+            }
+            return;
+        }
+
+        // Calculate address value from inputs 0..widthBits-1
+        let addr = 0;
+        for (let i = 0; i < this.widthBits; i++) {
+            if (this.inputs[i] && this.inputs[i].value === 1) {
+                addr |= (1 << i);
+            }
+        }
+
+        for (let j = 0; j < outputCount; j++) {
+            if (this.outputs[j]) {
+                this.outputs[j].value = (j === addr) ? 1 : 0;
+            }
+        }
+    }
+
+    draw(ctx, isSelected) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate((this.rotation * Math.PI) / 180);
+
+        if (isSelected) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#00adb5";
+            ctx.strokeStyle = "#00adb5";
+            ctx.lineWidth = 2.5;
+        } else {
+            ctx.strokeStyle = "#4e4e4e";
+            ctx.lineWidth = 1.5;
+        }
+
+        ctx.fillStyle = "#1e293b";
+        ctx.beginPath();
+        ctx.save();
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 6);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        // Title
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(this.label || `DEC(${this.widthBits}:${Math.pow(2, this.widthBits)})`, 0, 0);
+
+        // Draw pin labels inside box
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "bold 9px monospace";
+        ctx.textBaseline = "middle";
+
+        this.inputs.forEach(pin => {
+            const rx = this.flipX ? -pin.relX : pin.relX;
+            const ry = this.flipY ? -pin.relY : pin.relY;
+            ctx.textAlign = "left";
+            ctx.fillText(pin.name, rx + 8, ry);
+        });
+
+        this.outputs.forEach(pin => {
+            const rx = this.flipX ? -pin.relX : pin.relX;
+            const ry = this.flipY ? -pin.relY : pin.relY;
+            ctx.textAlign = "right";
+            ctx.fillText(pin.name, rx - 6, ry);
+        });
+
+        ctx.restore();
+
+        this.drawPins(ctx);
+    }
+}
+
 export class MUXGate extends Component {
     constructor(id, x, y) {
         super(id, "MUX", x, y);
@@ -1913,7 +2319,20 @@ export const COMPONENT_REGISTRY = {
     "MUX": MUXGate,
     "mux": MUXGate,
     "2:1 MUX": MUXGate,
-    "2:1 Multiplexer": MUXGate
+    "2:1 Multiplexer": MUXGate,
+    "Decoder": DecoderGate,
+    "DECODER": DecoderGate,
+    "decoder": DecoderGate,
+    "2-to-4 Decoder": DecoderGate,
+    "Priority Encoder": PriorityEncoderGate,
+    "PRIORITY_ENCODER": PriorityEncoderGate,
+    "priority_encoder": PriorityEncoderGate,
+    "priority encoder": PriorityEncoderGate,
+    "4-to-2 Priority Encoder": PriorityEncoderGate,
+    "Comparator": ComparatorGate,
+    "COMPARATOR": ComparatorGate,
+    "comparator": ComparatorGate,
+    "Digital Comparator": ComparatorGate
 };
 
 /**
