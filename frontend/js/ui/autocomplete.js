@@ -386,7 +386,12 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
         addType("npn", "NPN Transistor Switch");
         addType("pnp", "PNP Transistor Switch");
         addType("7-segment display", "7-Segment LED Display");
+        addType("4-digit 7-segment display", "4-Digit 7-Segment Display");
         addType("10-segment display", "10-Segment LED Bargraph");
+        addType("decoder", "2-to-4 or N-to-2^N Decoder", "(bits)");
+        addType("priority encoder", "4-to-2 or N-to-log2N Priority Encoder", "(inputs)");
+        addType("priority_encoder", "Priority Encoder", "(inputs)");
+        addType("comparator", "N-Bit Magnitude Comparator", "(width)");
         return types;
     };
 
@@ -765,12 +770,12 @@ export function getCompletions(fullText, cursorOffset, envContext = {}) {
                 }
             }
         }
-        if (["register", "counter"].includes(modName.toLowerCase())) {
+        if (["register", "counter", "decoder", "priority encoder", "priority_encoder", "comparator"].includes(modName.toLowerCase())) {
             if (!candidates.some(c => c.name === "width=")) {
                 candidates.push({
                     name: "width=",
                     type: "parameter",
-                    desc: `Parameter 'width' for ${modName}`
+                    desc: `Parameter 'width' or size for ${modName}`
                 });
             }
         }

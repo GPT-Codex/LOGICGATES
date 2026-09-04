@@ -46,6 +46,10 @@ export class CommandEngine {
         this.typeMap["npn"] = "NPN Transistor";
         this.typeMap["pnp"] = "PNP Transistor";
         this.typeMap["led"] = "LED";
+        this.typeMap["decoder"] = "Decoder";
+        this.typeMap["priority_encoder"] = "Priority Encoder";
+        this.typeMap["priority encoder"] = "Priority Encoder";
+        this.typeMap["comparator"] = "Comparator";
     }
 
     /**
@@ -264,7 +268,10 @@ export class CommandEngine {
             paramArgsStr = argMatch[2].trim();
         }
 
-        const typeCandidate = rawTypeStr.toLowerCase();
+        let typeCandidate = rawTypeStr.toLowerCase();
+        if (typeCandidate.startsWith("display ") || typeCandidate.startsWith("module ") || typeCandidate.startsWith("cable ") || typeCandidate.startsWith("connector ")) {
+            typeCandidate = typeCandidate.replace(/^(display|module|cable|connector)\s+/, "");
+        }
 
         let actualType = this.typeMap[typeCandidate];
         let customDef = null;
@@ -1659,10 +1666,14 @@ export class CommandEngine {
             "XNOR": "xnor",
             "LED": "led",
             "7-Segment Display": "7-segment display",
+            "4-Digit 7-Segment Display": "4-digit 7-segment display",
             "10-Segment Display": "10-segment display",
             "Button": "button",
             "NPN Transistor": "npn",
-            "PNP Transistor": "pnp"
+            "PNP Transistor": "pnp",
+            "Decoder": "decoder",
+            "Priority Encoder": "priority_encoder",
+            "Comparator": "comparator"
         };
 
         const inputGateNames = new Set(def.inputs);

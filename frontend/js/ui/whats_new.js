@@ -2,13 +2,25 @@
  * Authoritative Application Version & What's New Changelog Metadata.
  */
 
-export const APP_VERSION = "v0.18.0";
+export const APP_VERSION = "v0.19.0";
 
 export const RELEASE_NOTES = [
     {
-        version: "v0.18.0",
+        version: "v0.19.0",
         date: "Current Release",
         isCurrent: true,
+        highlights: [
+            "Combinational Logic Primitives: Added Decoder (DECODER(bits)), Priority Encoder (PRIORITY_ENCODER(inputs)), and Digital Magnitude Comparator (COMPARATOR(width)).",
+            "Composite Display Assemblies: Create reusable display custom parts (type = 'display') that preserve exact bounding geometry and render live embedded display components without inner pin label clutter or highlight artifacts.",
+            "3-Terminal BJT Transistors: NPN and PNP transistor switches modeled as digital switch abstractions (Base, Collector, Emitter) with clear schematic symbols.",
+            "4-Digit 7-Segment Display: Added 4-digit multiplexed seven-segment display component (a..dp, DIG1..DIG4).",
+            "Visual Pin Labels: Added clear pin labels to Register (D[0..N-1], CLK, Q[0..N-1]), Counter (CLK, EN, Q[0..N-1]), and 7-Segment Display (a..g, dp) components."
+        ]
+    },
+    {
+        version: "v0.18.0",
+        date: "Previous Release",
+        isCurrent: false,
         highlights: [
             "Added 2:1 Multiplexer (MUX) component and parameterized vector MUX(width) modules.",
             "Fixed script editor autocomplete for imported library modules and aliased namespaces (e.g. 'operations.RCA').",

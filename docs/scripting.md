@@ -332,15 +332,21 @@ Supported built-in component types:
 - `register` / `REGISTER(width)` (Parameterized N-Bit Register)
 - `counter` / `COUNTER(width)` (Parameterized N-Bit Binary Up-Counter)
 - `mux` / `MUX` / `2:1 MUX` (2:1 Multiplexer)
+- `decoder` / `DECODER(bits)` (2-to-4 up to N-to-$2^N$ Decoder)
+- `priority_encoder` / `PRIORITY_ENCODER(inputs)` (4-to-2 up to N-to-$\log_2 N$ Priority Encoder)
+- `comparator` / `COMPARATOR(width)` (1 to 16-Bit Digital Magnitude Comparator)
 - `and` / `nand`
 - `or` / `nor`
 - `xor` / `xnor`
 - `not`
 - `buffer`
-- `npn` / `pnp` (Transistor Switches)
-- `led`
-- `7-segment display` / `10-segment display`
+- `npn` / `pnp` (BJT Transistor Switch Abstraction)
+- `led` (LED Indicator)
+- `7-segment display` (Standard 7-Segment LED Display)
+- `4-digit 7-segment display` (4-Digit Multiplexed 7-Segment Display)
+- `10-segment display` (10-Segment LED Bargraph)
 - Custom & Scripted Module Names (e.g. `HalfAdder`, `FullAdder`, `RippleAdder4`)
+- Composite Display Assemblies (`add display MyDisplay D1`)
 
 ---
 
@@ -693,9 +699,9 @@ connect FF0.Q -> DIV2.D
 The simulator provides a built-in parameterized register component:
 - **Syntax:** `add REGISTER(width) NAME` (e.g. `add REGISTER(16) R16`, `add REGISTER(8) R8`). Default width is 8 bits.
 - **Pins:**
-  - `D[0..width-1]` (Inputs): Vector data input
+  - `D[0..width-1]` (Inputs): Vector data input (e.g. `D[0]`, `D[1]`, ... `D[15]`)
   - `CLK` (Input): Clock trigger signal
-  - `Q[0..width-1]` (Outputs): Stored vector output
+  - `Q[0..width-1]` (Outputs): Stored vector output (e.g. `Q[0]`, `Q[1]`, ... `Q[15]`)
 - **Behavior:** On the rising edge of `CLK` (0 → 1), all `width` bits of `Q` sample `D[0..width-1]` simultaneously. Between clock edges, `Q` remains unchanged. Initial state is `0`.
 
 Example:
@@ -757,7 +763,7 @@ The simulator provides a built-in parameterized binary up-counter component:
 - **Pins:**
   - `CLK` (Input): Clock trigger signal
   - `EN` (Input): Enable control (defaults to HIGH / 1 when disconnected)
-  - `Q[0..width-1]` (Outputs): Current binary count vector
+  - `Q[0..width-1]` (Outputs): Current binary count vector (e.g. `Q[0]`, `Q[1]`, ... `Q[3]`)
 - **Behavior:** On every rising edge of `CLK` (0 → 1), if `EN = 1`, the internal count increments by 1 with modulo $2^\text{width}$ wraparound ($255 \to 0$ for 8-bit). Initial state is `0`.
 
 Example:
@@ -770,4 +776,123 @@ bus COUNT_VAL[0..7]
 
 connect CLK.CLK -> COUNT8.CLK
 connect COUNT8.Q COUNT_VAL
+```
+
+---
+
+## 10.1 Combinational Logic Primitives (`decoder`, `priority_encoder`, `comparator`)
+
+### N-to-$2^N$ Decoder (`decoder`)
+- **Syntax:** `add DECODER(bits) NAME` or `add decoder NAME` (defaults to 2 bits, 2-to-4 decoder).
+- **Pins:**
+  - `A[0..bits-1]` (Inputs): Address select lines
+  - `EN` (Input): Enable line (active HIGH, default 1 if unconnected)
+  - `Y0`..`Y(2^bits-1)` or `Y[0..2^bits-1]` (Outputs): One-hot decoded active output lines
+- **Behavior:** When `EN = 1`, output line `Y[A]` is HIGH (1) and all other outputs are LOW (0). When `EN = 0`, all outputs are 0.
+
+Example:
+```sim
+add DECODER(2) DEC
+add input A0
+add input A1
+connect A0 DEC.A[0]
+connect A1 DEC.A[1]
+```
+
+### Priority Encoder (`priority_encoder`)
+- **Syntax:** `add PRIORITY_ENCODER(inputs) NAME` or `add priority_encoder NAME` (defaults to 4 inputs).
+- **Pins:**
+  - `I0`..`I(inputs-1)` or `I[0..inputs-1]` (Inputs): Data input lines
+  - `A`, `B` (or `Y[0..log2(inputs)-1]`) (Outputs): Binary encoded output index
+  - `VALID` (Output): High when at least one input line is active (1)
+- **Behavior:** Encodes the highest-numbered active input index into binary. If no input is active, `VALID = 0` and encoded output lines are deterministically 0.
+
+Example:
+```sim
+add PRIORITY_ENCODER(4) ENC
+add input I0
+add input I3
+connect I0 ENC.I0
+connect I3 ENC.I3
+# Encodes I3 (highest index 3) -> Y = 3 (A=1, B=1), VALID = 1
+```
+
+### Digital Magnitude Comparator (`comparator`)
+- **Syntax:** `add COMPARATOR(width) NAME` or `add comparator NAME` (defaults to 4 bits).
+- **Pins:**
+  - `A[0..width-1]` (Inputs): First unsigned binary vector
+  - `B[0..width-1]` (Inputs): Second unsigned binary vector
+  - `EQ` (Output): Active HIGH when $A == B$
+  - `GT` (Output): Active HIGH when $A > B$
+  - `LT` (Output): Active HIGH when $A < B$
+- **Behavior:** Performs bitwise magnitude comparison from MSB to LSB. Exactly one output line (`EQ`, `GT`, or `LT`) is HIGH at any time.
+
+Example:
+```sim
+add COMPARATOR(8) COMP8
+bus A[0..7]
+bus B[0..7]
+
+connect A COMP8.A
+connect B COMP8.B
+```
+
+---
+
+## 11. BJT Transistor Switches (`npn` and `pnp`)
+
+NPN and PNP BJT transistors are modeled as **3-terminal digital switch abstractions**:
+- **Terminals:**
+  - `B` (Base): Control input terminal
+  - `C` (Collector): Input signal terminal
+  - `E` (Emitter): Output signal terminal
+
+### NPN Transistor (`npn`)
+- **Base = 1 (HIGH):** Collector-Emitter path is ON (conducting). Signal on `C` propagates to `E`.
+- **Base = 0 (LOW):** Collector-Emitter path is OFF (non-conducting). Output `E = 0`.
+
+### PNP Transistor (`pnp`)
+- **Base = 0 (LOW):** Collector-Emitter path is ON (conducting). Signal on `C` propagates to `E`.
+- **Base = 1 (HIGH):** Collector-Emitter path is OFF (non-conducting). Output `E = 0`.
+
+Example:
+```sim
+add input C_IN
+add input B_CTL
+add npn Q1
+add output E_OUT
+
+connect C_IN Q1.C
+connect B_CTL Q1.B
+connect Q1.E E_OUT
+```
+
+---
+
+## 12. Display Components & Composite Displays
+
+### Display Primitives & Pins
+- **`7-segment display`:** Single digit display with 8 input pins: `a`, `b`, `c`, `d`, `e`, `f`, `g`, `dp`.
+- **`4-digit 7-segment display`:** 4-digit multiplexed display with 12 input pins:
+  - Segments: `a`, `b`, `c`, `d`, `e`, `f`, `g`, `dp`
+  - Digit Select: `DIG1`, `DIG2`, `DIG3`, `DIG4` (rendered left-to-right in reading order).
+- **`10-segment display`:** 10-segment LED bargraph indicator with 10 input pins (`In1`..`In10`).
+- **`led`:** Single LED indicator bulb.
+
+### Composite Display Custom Parts
+Composite displays allow combining multiple display components into a single reusable display custom part:
+- **Custom Part Type:** Saved with type `display` and grouped under `Displays` in the Custom Parts library.
+- **Geometry & Size:** Preserves the exact bounding box and physical arrangement of the selected display assembly.
+- **Embedded Rendering:** Renders live, animated embedded display components directly inside the panel on canvas rather than an abstraction box.
+- **External Pins:** External input and output pins are derived automatically from the selection's external wiring.
+
+### Script Instantiation
+Composite displays can be instantiated in `.sim` scripts using `add display NAME INSTANCE` or `add NAME INSTANCE`:
+
+```sim
+add display MyDisplay D1
+move D1 to (200, 200)
+
+connect A D1.a
+connect B D1.b
 ```

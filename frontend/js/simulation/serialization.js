@@ -69,6 +69,12 @@ export function serializeCircuit(circuit, registry) {
         } else if (comp.type === "Counter" || comp.type === "COUNTER" || comp.type === "counter") {
             serialized.widthBits = comp.widthBits || 4;
             serialized.count = comp.count || 0;
+        } else if (comp.type === "Decoder" || comp.type === "DECODER" || comp.type === "decoder") {
+            serialized.widthBits = comp.widthBits || 2;
+        } else if (comp.type === "Priority Encoder" || comp.type === "PRIORITY_ENCODER" || comp.type === "priority_encoder") {
+            serialized.numInputs = comp.numInputs || 4;
+        } else if (comp.type === "Comparator" || comp.type === "COMPARATOR" || comp.type === "comparator") {
+            serialized.widthBits = comp.widthBits || 4;
         } else if (comp.type === "UserModule" && comp.definition) {
             serialized.definitionId = comp.definition.id;
             serialized.pinPositions = comp.pins().map(p => ({
@@ -123,7 +129,8 @@ export function serializeCircuit(circuit, registry) {
                 params: def.params || [],
                 paramValues: def.paramValues || null,
                 rawBodyText: def.rawBodyText || "",
-                startLine: def.startLine || 1
+                startLine: def.startLine || 1,
+                bbox: def.bbox || null
             });
         }
     }
@@ -177,7 +184,8 @@ export function deserializeCircuit(data, circuit, registry) {
                 defType,
                 defData.dependencies || [],
                 defData.params || [],
-                defData.paramValues || null
+                defData.paramValues || null,
+                defData.bbox || null
             );
             def.rawBodyText = defData.rawBodyText || "";
             def.startLine = defData.startLine || 1;
@@ -250,6 +258,18 @@ export function deserializeCircuit(data, circuit, registry) {
             if (compData.count !== undefined) {
                 comp.count = compData.count;
                 comp.evaluate();
+            }
+        } else if (comp.type === "Decoder" || comp.type === "DECODER" || comp.type === "decoder") {
+            if (compData.widthBits !== undefined) {
+                comp.setWidth(compData.widthBits);
+            }
+        } else if (comp.type === "Priority Encoder" || comp.type === "PRIORITY_ENCODER" || comp.type === "priority_encoder") {
+            if (compData.numInputs !== undefined) {
+                comp.setWidth(compData.numInputs);
+            }
+        } else if (comp.type === "Comparator" || comp.type === "COMPARATOR" || comp.type === "comparator") {
+            if (compData.widthBits !== undefined) {
+                comp.setWidth(compData.widthBits);
             }
         } else if (comp.type === "UserModule" && compData.pinPositions) {
             compData.pinPositions.forEach(pos => {

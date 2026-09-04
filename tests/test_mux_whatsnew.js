@@ -14,9 +14,9 @@ async function runMuxAndWhatsNewTests() {
     // 1. What's New Version System
     {
         assert.ok(APP_VERSION, "APP_VERSION must be defined");
-        assert.strictEqual(APP_VERSION, "v0.18.0");
+        assert.strictEqual(APP_VERSION, "v0.19.0");
         assert.ok(Array.isArray(RELEASE_NOTES) && RELEASE_NOTES.length > 0);
-        assert.strictEqual(RELEASE_NOTES[0].version, "v0.18.0");
+        assert.strictEqual(RELEASE_NOTES[0].version, "v0.19.0");
         assert.ok(RELEASE_NOTES[0].isCurrent);
         console.log("  ✓ What's New version system metadata passed");
     }
